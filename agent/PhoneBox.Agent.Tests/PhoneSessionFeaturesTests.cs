@@ -318,4 +318,13 @@ public sealed class PhoneSessionFeaturesTests : IDisposable
 
         long Total() => ClaudeUsage.Aggregate(usage.Entries, DateTimeOffset.Now, TimeZoneInfo.Local).Week.Tokens;
     }
+
+    [Theory]
+    [InlineData("/private/var/folders/xy/T/tmp.xDvc6VmV3j", true)]
+    [InlineData("/private/var/folders/xy/T/work/app", false)]
+    [InlineData("/tmp/scratch", true)]
+    [InlineData("/Users/me/Desktop/tmp.abc", true)]
+    [InlineData("/Users/me/Desktop/phonebox", false)]
+    public void TemporaryFoldersAreNotProjects(string cwd, bool temporary) =>
+        Assert.Equal(temporary, PhoneBox.Agent.ClaudeProjects.IsTemporary(cwd));
 }

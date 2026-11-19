@@ -68,11 +68,19 @@ public sealed class ClaudeProjects(SessionMonitor sessions)
                 catch (UnauthorizedAccessException) { }
             }
 
-        return lastUsed.Where(kv => dirExists(kv.Key))
+        return lastUsed.Where(kv => !IsTemporary(kv.Key) && dirExists(kv.Key))
             .OrderByDescending(kv => kv.Value)
             .Take(Max)
             .Select(kv => new ClaudeProject(kv.Key, Path.GetFileName(kv.Key) is { Length: > 0 } n ? n : kv.Key, kv.Value))
             .ToList();
+    }
+
+    /// <summary>Throwaway folders (mktemp's tmp.*, /tmp) are not projects anyone wants to start a session in.</summary>
+    internal static bool IsTemporary(string cwd)
+    {
+        var p = cwd.Replace('\\', '/');
+        return p.StartsWith("/tmp/", StringComparison.Ordinal) || p.StartsWith("/private/tmp/", StringComparison.Ordinal)
+            || Path.GetFileName(p).StartsWith("tmp.", StringComparison.Ordinal); // mktemp's folders
     }
 
     /// <summary>The top-level "cwd" of the first transcript line that has one (the first lines often do not).</summary>
