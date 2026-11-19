@@ -106,6 +106,8 @@ test('the settings page shows no English left in Vietnamese, with every section 
     'SoundVolumeView', 'xdotool', 'wtype', 'soffice', 'POWERPNT', 'VS Code', 'Strip[0].Gain',
     // Wi-Fi and Tailscale are product names, so the section title stays the same in every language
     'Wi-Fi & Tailscale',
+    // Google's name for its design language, kept as the theme's name in every language
+    'Material You',
     // an OBS/Home Assistant UI label the user looks for inside those programs, not our own interface text
     'Long-lived access tokens', 'Spotify Client ID', 'Client ID', 'Client secret',
     'Enable WebSocket server', 'Show Connect Info', 'Secret address in iCal format',

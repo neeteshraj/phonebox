@@ -144,6 +144,15 @@
   // the phone reports its battery through /api/phone/battery; /api/charge serves the last report
   let phoneBattery = { level: 72, plugged: true, temp: 29, at: now() - 20e3, source: 'usb', usb: 'configured' };
   let approvals = [];
+  const sessionRuns = {};
+  const sysControls = {
+    displays: [
+      { id: '1', name: 'Built-in Display', builtin: true, main: true, focused: true, width: 3024, height: 1964, hz: 120, brightness: 72 },
+      { id: '2', name: 'DELL U2723QE', builtin: false, main: false, focused: false, width: 3840, height: 2160, hz: 60, brightness: null },
+    ],
+    keyboard: { available: true, brightness: 40 },
+    search: true,
+  };
   const SAMPLE_PROMPTS = [
     { tool: 'Run a command', detail: 'git push origin main --force-with-lease', description: 'Push the rebased branch', project: 'api-gateway' },
     { tool: 'Edit a file', detail: 'src/routes/billing.ts\n\n  export const limit = rateLimit({ windowMs: 60_000, max: 120 })', description: '', project: 'docs-site' },
@@ -172,7 +181,24 @@
   const TRACKS = [['Midnight Circuit', 'Neon Harbor', 'Low Tide Lights', 214000], ['Paper Lanterns', 'Neon Harbor', 'Low Tide Lights', 187000], ['Slow Orbit', 'Hollow Pines', 'Northern Rooms', 243000]];
   const player = { track: 0, playing: true, posMs: 61000, at: now() };
   const position = () => { const dur = TRACKS[player.track][3]; return player.playing ? (player.posMs + now() - player.at) % dur : Math.min(player.posMs, dur); };
-  function mediaAction(action, ms) {
+  // Extra players beside the Spotify one, so the media card shows its carousel: a YouTube tab and a paused Netflix tab.
+  const extraPlayers = [
+    { id: 'chrome:1:7', app: 'YouTube', title: 'Lofi Rain — Study Session', artist: 'Chillhop Music', album: '', durMs: 3540e3, posMs: 1260e3, playing: true, at: now(), canSeek: true, artId: 1 },
+    { id: 'chrome:1:9', app: 'Netflix', title: 'Episode 4 · The Long Night', artist: 'Netflix', album: '', durMs: 2940e3, posMs: 1712e3, playing: false, at: now(), canSeek: true, artId: 1 },
+  ];
+  const extraPos = (x) => Math.min(x.durMs, x.posMs + (x.playing ? now() - x.at : 0));
+  function mediaSessions(main) {
+    return [{ id: 'spotify', ...main }, ...extraPlayers.map((x) => ({ ...x, posMs: extraPos(x) }))];
+  }
+  function mediaAction(action, ms, session) {
+    const x = extraPlayers.find((p) => p.id === session);
+    if (x) {
+      x.posMs = extraPos(x); x.at = now();
+      if (action === 'playpause') x.playing = !x.playing;
+      else if (action === 'seek' && ms != null) x.posMs = ms;
+      else if (action === 'prev') x.posMs = 0;
+      return true;
+    }
     const pos = position();
     if (action === 'playpause' || action === 'play' || action === 'pause') { player.posMs = pos; player.at = now(); player.playing = action === 'playpause' ? !player.playing : action === 'play'; }
     else if (action === 'next' || action === 'prev') { player.track = (player.track + (action === 'next' ? 1 : TRACKS.length - 1)) % TRACKS.length; player.posMs = 0; player.at = now(); }
@@ -203,6 +229,7 @@
         })(),
       },
       media: { app: 'Spotify', title, artist, album, durMs: dur, posMs: position(), playing: player.playing, canSeek: true, artId: player.track + 1 },
+      mediaSessions: mediaSessions({ app: 'Spotify', title, artist, album, durMs: dur, posMs: position(), playing: player.playing, canSeek: true, artId: player.track + 1 }),
       audio: { ...audio },
       ping: { host: '1.1.1.1', ms: wave(13, 9, 16), avgMs: 12, lossPct: 0 },
       // the microphone is "in use" for 20 s of every minute, to show the On air widget
@@ -531,7 +558,7 @@
       else return json({}, 400);
       return json({ ...audio });
     }
-    if (path.startsWith('/api/media/') && method === 'POST') return json({}, mediaAction(path.slice(11), q.has('ms') ? +q.get('ms') : null) ? 200 : 400);
+    if (path.startsWith('/api/media/') && method === 'POST') return json({}, mediaAction(path.slice(11), q.has('ms') ? +q.get('ms') : null, q.get('session')) ? 200 : 400);
     if (path === '/api/procs/kill' && method === 'POST') {
       // KillResult; refused unless an enabled page has a processes widget that allows it (AgentConfig.AllowKill)
       const c = await config(), allowed = (c.pages || []).filter((p) => p.enabled !== false).some((p) => widgets({ pages: [p] }).some((w) => w.type === 'processes' && w.options?.allowKill !== false));
@@ -657,6 +684,49 @@
     if (path === '/api/procs') return json(procs());
     if (path === '/api/procs/detail') return json(procDetail(q.get('name')));
     if (path.startsWith('/api/widget/')) return json({ output: String(3 + Math.floor(Math.random() * 3)), at: now() - 8000, ok: true, running: false, durationMs: 412 });
+    // Control center: two displays (focus moves the pointer), brightness, keyboard backlight, Spotlight search
+    if (path === '/api/system/controls' && method === 'GET') return json(sysControls);
+    if (path === '/api/system/display/focus' && method === 'POST') {
+      if (!sysControls.displays.some((d) => d.id === q.get('id'))) return json({}, 404);
+      sysControls.displays.forEach((d) => (d.focused = d.id === q.get('id'))); return json({ ok: true });
+    }
+    if (path === '/api/system/display/brightness' && method === 'POST') {
+      const d = sysControls.displays.find((x) => x.id === q.get('id'));
+      if (!d) return json({}, 404);
+      if (d.brightness == null) return json({ error: 'unsupported' }, 400);
+      d.brightness = Math.max(0, Math.min(100, +q.get('value'))); return json({ ok: true });
+    }
+    if (path === '/api/system/keyboard' && method === 'POST') { sysControls.keyboard.brightness = Math.max(0, Math.min(100, +q.get('value'))); return json({ ok: true }); }
+    if (path === '/api/system/search' && method === 'POST') return json({ ok: true });
+    // prompts sent to an AI session from the phone: a made-up reply streams back word by word
+    if (path === '/api/sessions/run' && method === 'GET') { const r = sessionRuns[q.get('id')]; return r ? json(r) : json({}, 404); }
+    if (path === '/api/sessions/prompt/cancel' && method === 'POST') {
+      const r = Object.values(sessionRuns).find((x) => x.runId === q.get('runId'));
+      if (!r) return json({}, 404);
+      r.status = 'cancelled'; r.endedAt = now(); emit('session-run', r, false); return json({});
+    }
+    if (path === '/api/sessions/prompt' && method === 'POST') {
+      const id = q.get('id'), text = (q.get('text') || '').trim();
+      if (!text) return json({ error: 'Empty prompt' }, 400);
+      if (sessionRuns[id]?.status === 'running') return json({ error: 'busy' }, 409);
+      const r = sessionRuns[id] = { runId: Math.random().toString(16).slice(2, 10), sessionId: id, status: 'running', startedAt: now(), endedAt: null,
+        items: [...(sessionRuns[id]?.items || []), { role: 'user', text }] };
+      const words = `Sure. I looked at the project and the change is small: the handler reads the limit from config, so I updated the default and added a test for it. Everything passes.`.split(' ');
+      let i = 0;
+      const step = () => {
+        if (r.status !== 'running') return;
+        if (i === 0) r.items.push({ role: 'tool', text: 'Bash: npm test -- --runInBand' });
+        if (i === 0) r.items.push({ role: 'assistant', text: '' });
+        r.items[r.items.length - 1].text += (i ? ' ' : '') + words[i];
+        i++;
+        if (i >= words.length) { r.status = 'done'; r.endedAt = now(); }
+        emit('session-run', JSON.parse(JSON.stringify(r)), false);
+        if (r.status === 'running') setTimeout(step, 90);
+      };
+      setTimeout(step, 700);
+      emit('session-run', JSON.parse(JSON.stringify(r)), false);
+      return json({ runId: r.runId });
+    }
     if (path === '/api/approvals' && method === 'GET') return json({ items: approvals.filter((a) => a.expiresAt > now()) });
     if (path.startsWith('/api/approvals/') && method === 'POST') {
       const id = decodeURIComponent(path.slice(15));
@@ -762,10 +832,15 @@
     return 'data:image/svg+xml,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96"><rect x="6" y="6" width="84" height="84" rx="20" fill="hsl(${a.hue} 65% 52%)"/>`
       + `<text x="48" y="62" font-family="system-ui,sans-serif" font-size="42" font-weight="700" text-anchor="middle" fill="#fff">${a.name.slice(0, 1)}</text></svg>`);
   };
+  // made-up covers for the extra players: a rainy-window gradient and a dark poster
+  const sessionArt = (kind) => 'data:image/svg+xml,' + encodeURIComponent(kind === 'netflix'
+    ? '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96"><defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3b0a0d"/><stop offset="1" stop-color="#0b0b0f"/></linearGradient></defs><rect width="96" height="96" fill="url(#g)"/><circle cx="64" cy="30" r="14" fill="#e50914" opacity=".85"/><path d="M0 70 30 52 52 64 96 40v56H0z" fill="#1c1c24"/></svg>'
+    : '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2b5876"/><stop offset="1" stop-color="#4e4376"/></linearGradient></defs><rect width="96" height="96" fill="url(#g)"/><g stroke="#cfe3ff" stroke-opacity=".5" stroke-width="1.5"><path d="M14 8v14M30 20v10M48 6v16M66 18v12M82 8v14M22 40v12M58 38v10M76 44v12"/></g><rect x="20" y="58" width="56" height="26" rx="4" fill="#f4b860" opacity=".9"/></svg>');
   const swapDemoImg = (img) => {
     if (img.tagName !== 'IMG') return;
     const src = img.getAttribute('src') || '';
-    if (/\/api\/(art|controls\/radio-logo)|^https:\/\/i\.scdn\.co\/image\/demo\d+$/.test(src)) img.src = ART;
+    if (/\/api\/media\/art\?session=chrome/.test(src)) img.src = sessionArt(src.includes('%3A9') ? 'netflix' : 'youtube');
+    else if (/\/api\/(art|media\/art|controls\/radio-logo)|^https:\/\/i\.scdn\.co\/image\/demo\d+$/.test(src)) img.src = ART;
     else if (/\/api\/apps\/icon/.test(src)) img.src = appIcon(new URL(src, location.href).searchParams.get('id'));
   };
   new MutationObserver((list) => {

@@ -40,7 +40,8 @@ W.html = {
 };
 
 // Battery levels of the PC's wireless devices (agent: BatteryMonitor) and, optionally, the panel phone itself.
-export const BAT_ICONS = { headphones: '🎧', mouse: '🖱️', keyboard: '⌨️', controller: '🎮', laptop: '💻', pen: '🖊️', phone: '📱', other: '🔋' };
+// device kind -> interface glyph (see ICONS in main.js)
+export const BAT_ICONS = { headphones: 'headphones', mouse: 'mouse', keyboard: 'keyboard', controller: 'gamepad', laptop: 'laptop', pen: 'pen', phone: 'phone', other: 'battery' };
 W.batteries = {
   needs: ['tick'],
   create(box, { o }) {
@@ -62,10 +63,10 @@ W.batteries = {
       list.replaceChildren(...devices.map((d) => {
         const col = d.level <= low ? '#ef4444' : d.level <= low * 2 ? '#f59e0b' : '#22c55e';
         const row = h('div', 'bt-row' + (d.level <= low ? ' low' : ''),
-          h('span', 'bt-ico', BAT_ICONS[d.kind] || '🔋'),
+          h('span', 'bt-ico', icon(BAT_ICONS[d.kind] || 'battery')),
           h('span', 'bt-name', d.name),
           h('span', 'bt-bar', h('i')),
-          h('b', 'bt-pct', (d.charging ? '⚡' : '') + d.level + '%'));
+          h('b', 'bt-pct', d.charging ? icon('zap', 'bt-zap') : null, d.level + '%'));
         row.style.setProperty('--c', col);
         row.style.setProperty('--v', d.level / 100);
         return row;
@@ -586,7 +587,7 @@ W.battery = {
         const b = JSON.parse(bridge.battery());
         box.style.setProperty('--q', b.plugged ? '#22c55e' : b.level <= 20 ? '#ef4444' : b.level <= 40 ? '#f59e0b' : '#84cc16');
         dial.set(b.level, b.level, '%');
-        sub.textContent = (b.plugged ? '⚡ Charging' : 'On battery') + (b.temp ? ` · ${b.temp.toFixed(0)}°C` : '');
+        sub.replaceChildren(...(b.plugged ? [icon('zap', 'm'), 'Charging'] : ['On battery']), b.temp ? ` · ${b.temp.toFixed(0)}°C` : '');
       } catch (_) {}
     });
     return { update: load };
@@ -792,7 +793,7 @@ W.chargecare = {
       if (!(b.level >= 0)) return;
       q('.cc-fg').style.strokeDasharray = `${(C * b.level) / 100} ${C}`;
       q('.cc-pct').textContent = b.level + '%';
-      q('.cc-state').textContent = b.plugged ? '⚡' : '🔋';
+      q('.cc-state').replaceChildren(icon(b.plugged ? 'zap' : 'battery'));
       const col = b.level <= 20 ? '#ef4444' : ch.enabled && b.level > max ? '#f59e0b' : b.plugged ? '#22c55e' : 'rgb(var(--ambient))';
       box.style.setProperty('--cc', col);
       q('.cc-text').textContent = !ch.enabled ? `Battery care is off${b.temp ? ` · ${b.temp.toFixed(0)} °C` : ''}`

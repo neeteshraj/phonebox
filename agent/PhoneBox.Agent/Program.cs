@@ -66,6 +66,7 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<ControlDeck>());
 builder.Services.AddSingleton<PushStore>();
 builder.Services.AddSingleton<CommandRunner>();
 builder.Services.AddSingleton<ApprovalStore>();
+builder.Services.AddSingleton<SessionPrompts>();
 builder.Services.AddSingleton<HomeAssistant>();
 builder.Services.AddSingleton<AppConsole>();
 builder.Services.AddSingleton<Dictation>();
@@ -460,6 +461,7 @@ object State(IServiceProvider sp, long? ev)
         events = ev is { } since ? push.Since(since) : [],
         pc = sp.GetRequiredService<SystemMonitor>().Snapshot(),
         media = sp.GetRequiredService<ControlDeck>().EffectiveMedia(sp.GetRequiredService<MediaMonitor>().Snapshot()),
+        mediaSessions = sp.GetRequiredService<MediaMonitor>().Sessions(),
         audio = sp.GetRequiredService<AudioControl>().Snapshot(),
         ping = sp.GetRequiredService<PingMonitor>().Snapshot(),
         rules = sp.GetRequiredService<RuleEngine>().Active(),
@@ -686,6 +688,21 @@ app.MapDelete("/api/claude/hook", (ConfigStore cfg) => ClaudeHook.Configure(fals
 app.MapGet("/api/approvals", (ApprovalStore a) => Results.Json(new { items = a.Snapshot() }));
 app.MapPost("/api/approvals/{id}", (string id, string decision, ApprovalStore a) => a.Decide(id, decision) ? Results.Ok() : Results.NotFound());
 
+// Prompts from the phone to a Claude Code / Codex session (see SessionPrompts.cs); the reply streams as "session-run" events.
+// The prompt travels in ?text= (the phone's transport sends no request bodies); a JSON body {"text"} works for other callers.
+app.MapPost("/api/sessions/prompt", async (string? id, string? text, HttpRequest req, SessionPrompts prompts) =>
+{
+    if (text is null && req.ContentType?.StartsWith("application/json") == true)
+        try { text = (await req.ReadFromJsonAsync<JsonElement>()) is { ValueKind: JsonValueKind.Object } b && b.TryGetProperty("text", out var t) && t.ValueKind == JsonValueKind.String ? t.GetString() : null; }
+        catch (JsonException) { return Results.BadRequest(new { error = "invalid JSON" }); }
+    var (status, body) = prompts.Start(id, text);
+    return Results.Json(body, statusCode: status);
+});
+app.MapPost("/api/sessions/prompt/cancel", (string? runId, SessionPrompts prompts) =>
+    runId is not null && prompts.Cancel(runId) ? Results.Ok() : Results.NotFound());
+app.MapGet("/api/sessions/run", (string? id, SessionPrompts prompts) =>
+    id is not null && prompts.Get(id) is { } run ? Results.Json(run) : Results.NotFound());
+
 // Spectrum bars widget: each call keeps audio capture running for a few seconds and returns the latest bands
 // (the live stream also sends them as "spectrum" events; panels without the stream poll this instead).
 // Only band levels leave the agent, never audio; nothing is captured unless an enabled page has the widget.
@@ -725,10 +742,22 @@ app.MapGet("/api/phones", (ConfigStore cfg) =>
 app.MapGet("/api/art", (MediaMonitor media) =>
     media.Art is { } art ? Results.File(art.Bytes, art.Mime) : Results.NotFound());
 
-app.MapPost("/api/media/{action}", async (string action, long? ms, MediaMonitor media, ControlDeck deck, CancellationToken ct) =>
+// one player of the carousel (mediaSessions): its own artwork
+app.MapGet("/api/media/art", (string? session, MediaMonitor media) =>
+    media.SessionArt(string.IsNullOrEmpty(session) ? "system" : session) is { } art ? Results.File(art.Bytes, art.Mime) : Results.NotFound());
+
+app.MapPost("/api/media/{action}", async (string action, long? ms, string? session, MediaMonitor media, ControlDeck deck, CancellationToken ct) =>
 {
     var outcome = await deck.RunWithMediaFocusAsync(async token =>
     {
+        if (!string.IsNullOrEmpty(session))
+        {
+            // a specific player: no radio takeover, but starting it still stops the radios like the shared controls do
+            var wasPlaying = media.Sessions().FirstOrDefault(s => s.Id == session)?.Playing == true;
+            var sessionOk = await media.Control(action, ms, session);
+            if (sessionOk && (action is "next" or "prev" || (action == "playpause" && !wasPlaying))) deck.StopAllRadios();
+            return (Ok: sessionOk, Media: deck.EffectiveMedia(media.Snapshot()));
+        }
         var sysSnapshot = media.Snapshot();
         if (await deck.TryControlRadioMediaCoreAsync(action, sysSnapshot, token) is { } radioHandled)
             return (Ok: radioHandled, Media: deck.EffectiveMedia(media.Snapshot()));
@@ -752,6 +781,12 @@ app.MapPost("/api/volume", (int? level, string? op, AudioControl audio) =>
     };
     return ok ? Results.Json(audio.Current()) : Results.BadRequest();
 });
+
+app.MapGet("/api/system/controls", (ControlDeck deck) => Results.Json(SystemControls.Snapshot(deck)));
+app.MapPost("/api/system/display/focus", (string? id, ControlDeck deck) => SystemControls.Focus(id, deck));
+app.MapPost("/api/system/display/brightness", (string? id, int? value, ControlDeck deck) => SystemControls.Brightness(id, value, deck));
+app.MapPost("/api/system/keyboard", (int? value) => SystemControls.Keyboard(value));
+app.MapPost("/api/system/search", (string? q) => SystemControls.Search(q));
 
 app.MapGet("/api/quotas", (QuotaMonitor q) => Results.Json(new { providers = q.Snapshot(), overview = q.Overview() }));
 

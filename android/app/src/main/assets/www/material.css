@@ -1,0 +1,509 @@
+/* Material You theme (Settings › Display › Theme): Android-native look.
+   Tonal palette derived from the accent colour like Android's dynamic colour, Roboto type scale,
+   28dp surfaces, pill buttons, FAB, M3 sliders / progress / snackbars. Loaded before appearance.css,
+   so per-widget appearance overrides still win. */
+body[data-theme="material"] {
+  /* hex first: WebViews without color-mix keep a sensible violet scheme */
+  --m-primary: #d0bcff; --m-on-primary: #381e72;
+  --m-pc: #4f378b; --m-on-pc: #eaddff;
+  --m-sc: #4a4458; --m-on-sc: #e8def8;
+  --m-tc: #633b48; --m-on-tc: #ffd8e4;
+  --m-surface: #141218; --m-s1: #1d1b20; --m-s2: #211f26; --m-s3: #2b2930; --m-s4: #36343b;
+  --m-on-surface: #e6e0e9; --m-on-var: #cac4d0; --m-outline: #938f99; --m-outline-var: #49454f;
+  --m-primary: color-mix(in oklab, var(--accent) 62%, white);
+  --m-on-primary: color-mix(in oklab, var(--accent) 40%, #0b0a0f);
+  --m-pc: color-mix(in oklab, var(--accent) 52%, #121016);
+  --m-on-pc: color-mix(in oklab, var(--accent) 22%, white);
+  --m-sc: color-mix(in oklab, var(--accent) 24%, #2a2830);
+  --m-on-sc: color-mix(in oklab, var(--accent) 16%, #f3eff6);
+  --m-tc: color-mix(in oklab, color-mix(in hsl shorter hue, var(--accent), #ff6fa8 70%) 50%, #1a1418);
+  --m-on-tc: color-mix(in oklab, color-mix(in hsl shorter hue, var(--accent), #ff6fa8 70%) 22%, white);
+  --m-surface: color-mix(in oklab, var(--accent) 5%, #111014);
+  --m-s1: color-mix(in oklab, var(--accent) 8%, #19181c);
+  --m-s2: color-mix(in oklab, var(--accent) 10%, #1e1c22);
+  --m-s3: color-mix(in oklab, var(--accent) 13%, #26242a);
+  --m-s4: color-mix(in oklab, var(--accent) 16%, #312f36);
+  --m-on-surface: color-mix(in oklab, var(--accent) 4%, #ece7ef);
+  --m-on-var: color-mix(in oklab, var(--accent) 8%, #c9c4cf);
+  --m-outline-var: color-mix(in oklab, var(--accent) 14%, #403d45);
+  --m-state: color-mix(in srgb, var(--m-on-surface) 12%, transparent);
+  --m-shape: clamp(16px, 9cqmin, 28px);
+  --m-ease: cubic-bezier(.2, 0, 0, 1);
+  --m-spring: cubic-bezier(.34, 1.4, .64, 1);
+
+  /* the panel's own tokens, mapped onto the scheme */
+  --bg: var(--m-surface);
+  --card: var(--m-s2);
+  --card-hi: var(--m-s3);
+  --line: transparent;
+  --text: var(--m-on-surface);
+  --muted: var(--m-on-var);
+  --dim: color-mix(in oklab, var(--m-on-var) 62%, var(--m-surface));
+  /* vivid but tonal metric colours (M3 tone 80) */
+  --cpu: #5eead4; --gpu: #bef264; --ram: #c4b5fd; --net: #fcd34d; --up: #93c5fd;
+  --ok: #6ee7a0; --err: #ffb4ab;
+  font-family: "Google Sans", "Product Sans", Roboto, system-ui, sans-serif;
+  letter-spacing: .01em;
+}
+body[data-theme="material"]::before {
+  /* a faint wash of the accent, like a dynamic-colour wallpaper glow */
+  background: radial-gradient(90% 70% at 50% -10%, rgba(var(--ambient), .10), transparent 70%);
+}
+
+/* ---------- surfaces: tonal cards, no borders, 28dp corners ---------- */
+body[data-theme="material"] .card {
+  /* tonal gradient: the widget's own colour (or the accent) at the top-left, a tertiary hint at the far corner */
+  background: var(--m-s2);
+  background: linear-gradient(150deg,
+    color-mix(in oklab, var(--c, var(--q, var(--accent))) 26%, var(--m-s2)) 0%,
+    var(--m-s2) 58%,
+    color-mix(in oklab, var(--m-tc) 55%, var(--m-s2)) 100%);
+  border: 0;
+  border-radius: var(--m-shape);
+  box-shadow: none;
+}
+/* metric widgets get a tonal container in their own colour (M3 expressive) */
+body[data-theme="material"] .w-stat.card { background: linear-gradient(140deg, color-mix(in oklab, var(--c, var(--accent)) 42%, var(--m-s1)), color-mix(in oklab, var(--c, var(--accent)) 10%, var(--m-s1)) 75%); }
+body[data-theme="material"] :is(.w-gauge, .w-quotaring).card { background: linear-gradient(160deg, color-mix(in oklab, var(--q, var(--accent)) 34%, var(--m-s1)), color-mix(in oklab, var(--q, var(--accent)) 8%, var(--m-s1)) 80%); }
+body[data-theme="material"] .w-stat .t-label { color: color-mix(in oklab, var(--c, var(--accent)) 70%, white); }
+
+/* ---------- type: sentence-case M3 labels instead of tracked caps ---------- */
+body[data-theme="material"] :is(.w-title, .s-label, .t-label, .g-label, .m-app, .gh-sec, .wc-n, .dc-kind) {
+  text-transform: none;
+  letter-spacing: .01em;
+  font-weight: 500;
+}
+body[data-theme="material"] .w-title { font-size: 13px; color: var(--c, var(--m-on-var)); }
+body[data-theme="material"] .s-label,
+body[data-theme="material"] .t-label { font-size: clamp(11px, 12cqh, 13px); }
+body[data-theme="material"] .g-label { font-size: clamp(10px, 6.4cqh, 14px); }
+body[data-theme="material"] .m-app { color: var(--m-primary); font-size: clamp(10px, 5cqh, 14px); }
+body[data-theme="material"] .w-sub { color: var(--m-on-var); font-size: 11.5px; }
+
+/* display numbers: Roboto regular, tight, tinted with their metric colour */
+body[data-theme="material"] .clock { font-weight: 400; letter-spacing: -0.035em; color: var(--m-on-surface); }
+body[data-theme="material"] .clock .hh { color: var(--m-primary); }
+body[data-theme="material"] .clock .colon { opacity: .4; }
+body[data-theme="material"] .clock .sec { color: var(--m-on-var); font-weight: 500; }
+body[data-theme="material"] .t-val b,
+body[data-theme="material"] .s-main b { font-weight: 400; letter-spacing: -0.03em; color: color-mix(in oklab, var(--c, var(--text)) 30%, var(--m-on-surface)); }
+body[data-theme="material"] .g-val { font-weight: 400; letter-spacing: -0.03em; }
+body[data-theme="material"] .w-stat .t-val,
+body[data-theme="material"] .w-stat .t-sub { text-shadow: none; }
+body[data-theme="material"] .w-stat canvas { opacity: .7; }
+body[data-theme="material"] .m-title { font-weight: 500; letter-spacing: 0; }
+
+/* ---------- circular progress (M3): round caps, tonal track, no glow ---------- */
+body[data-theme="material"] :is(.g-dial, .q-dial) .bg { stroke: color-mix(in srgb, var(--qc, var(--q, var(--m-primary))) 18%, var(--m-s4)); }
+body[data-theme="material"] :is(.g-dial, .q-dial) .fg { filter: none; transition: stroke-dashoffset .9s var(--m-ease); }
+body[data-theme="material"] .cc-bg { stroke: var(--m-s4); }
+body[data-theme="material"] .nv-ring circle { stroke: var(--m-sc); }
+body[data-theme="material"] .nv-ring #nvRing { stroke: var(--m-primary); }
+
+/* ---------- linear progress (M3): tonal track, primary indicator, stop dot ---------- */
+body[data-theme="material"] .bar::before { height: 4px; border-radius: 2px; background: var(--m-sc); }
+body[data-theme="material"] .fill { height: 4px; background: var(--m-primary); }
+body[data-theme="material"] .fill::after { display: none; }
+body[data-theme="material"] .bar::after {
+  content: ""; position: absolute; right: 0; width: 4px; height: 4px; border-radius: 50%; background: var(--m-primary);
+}
+
+/* ---------- sliders (M3 expressive): thick rounded track, bar handle ---------- */
+body[data-theme="material"] input[type=range] { height: 40px; }
+body[data-theme="material"] input[type=range]::-webkit-slider-runnable-track {
+  height: 16px; border-radius: 8px;
+  background: linear-gradient(to right, var(--m-primary) var(--p, 50%), var(--m-sc) var(--p, 50%));
+}
+body[data-theme="material"] input[type=range]::-webkit-slider-thumb {
+  width: 4px; height: 36px; margin-top: -10px; border-radius: 2px;
+  background: var(--m-primary);
+  box-shadow: 0 0 0 4px var(--m-s2);
+}
+body[data-theme="material"] input[type=range]:active::-webkit-slider-thumb { width: 2px; }
+
+/* ---------- icon buttons, FAB ---------- */
+body[data-theme="material"] .ic { transition: transform .2s var(--m-spring), background .2s, border-radius .25s var(--m-ease); }
+body[data-theme="material"] .ic:active { transform: scale(.92); background: var(--m-state); }
+body[data-theme="material"] .ic.play {
+  /* the play control is a FAB: rounded square in the primary container, morphs on press */
+  width: 56px; height: 56px; border-radius: 18px;
+  background: var(--m-pc); color: var(--m-on-pc);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .3), 0 4px 8px 3px rgba(0, 0, 0, .15);
+}
+body[data-theme="material"] .playing .ic.play,
+body[data-theme="material"] .ic.play:active { border-radius: 50%; }
+body[data-theme="material"] .ic:not(.play):not(.sm) { background: var(--m-s4); }
+body[data-theme="material"] .w-media.idle .m-controls .ic:not(.play) { opacity: .5; }
+@container (min-height: 230px) and (min-width: 420px) {
+  body[data-theme="material"] .w-media .ic.play { width: 72px; height: 72px; border-radius: 24px; }
+}
+body[data-theme="material"] .art-wrap { border-radius: clamp(12px, 8cqh, 28px); box-shadow: 0 4px 12px rgba(0, 0, 0, .35); }
+body[data-theme="material"] .art-wrap:not(:has(img.on)) { background: var(--m-tc); }
+body[data-theme="material"] .art-ph { color: var(--m-on-tc); }
+
+/* ---------- buttons: tonal pills, filled for the main action ---------- */
+body[data-theme="material"] :is(.mini-btn, .chip-btn, .ps-btn, .nv-btn, .dk-btn, .dc-btn, .pb, .ov-pc) {
+  background: var(--m-sc); color: var(--m-on-sc);
+  border: 0; border-radius: 999px; font-weight: 500;
+  transition: transform .2s var(--m-spring), filter .2s;
+}
+body[data-theme="material"] :is(.mini-btn, .chip-btn, .ps-btn, .nv-btn, .dk-btn, .dc-btn, .pb, .ov-pc):active { transform: scale(.95); filter: brightness(1.15); }
+body[data-theme="material"] .mini-btn { padding: 3px 12px; }
+body[data-theme="material"] .chip-btn { padding: 6px 14px; }
+body[data-theme="material"] .ps-btn { padding: 10px 18px; }
+body[data-theme="material"] :is(.nv-btn.go, .pb.main, .ov-pc.on) { background: var(--m-primary); color: var(--m-on-primary); }
+body[data-theme="material"] :is(.ps-btn, .dk-btn).danger,
+body[data-theme="material"] .dc-btn.on { background: #93000a; color: #ffdad6; }
+body[data-theme="material"] .dk-btn.go { background: #0f5223; color: #b6f2c4; }
+
+/* segmented button */
+body[data-theme="material"] .seg { background: transparent; border: 1px solid var(--m-outline-var); border-radius: 999px; padding: 0; overflow: hidden; }
+body[data-theme="material"] .seg button { border-radius: 0; padding: 6px 16px; color: var(--m-on-surface); font-weight: 500; }
+body[data-theme="material"] .seg button + button { border-left: 1px solid var(--m-outline-var); }
+body[data-theme="material"] .seg button.on { background: var(--m-sc); color: var(--m-on-sc); }
+
+/* chips */
+body[data-theme="material"] .chip { border-radius: 8px; background: transparent; border: 1px solid var(--m-outline-var); }
+
+/* ---------- shortcut keys: tonal tiles with an icon container ---------- */
+body[data-theme="material"] .key {
+  border: 0; border-radius: var(--m-shape);
+  background: linear-gradient(145deg, color-mix(in oklab, var(--k, var(--accent)) 46%, var(--m-s2)), color-mix(in oklab, var(--k, var(--accent)) 12%, var(--m-s1)) 85%);
+  gap: 8px;
+  transition: transform .25s var(--m-spring), border-radius .3s var(--m-ease), background .2s;
+}
+body[data-theme="material"] .key:active { transform: scale(.95); filter: none; border-radius: calc(var(--m-shape) * .55); background: color-mix(in oklab, var(--k, var(--accent)) 28%, var(--m-s3)); }
+body[data-theme="material"] .key .k-label { color: var(--m-on-surface); font-weight: 500; }
+
+/* list rows (processes, sessions, deck channels) */
+body[data-theme="material"] :is(.proc, .pi) { border: 0; background: var(--m-s2); border-radius: 16px; }
+body[data-theme="material"] .proc:active { background: var(--m-s3); }
+body[data-theme="material"] .p-ico { border-radius: 50%; }
+
+/* ---------- Control Deck: tonal buttons, channel cards ---------- */
+body[data-theme="material"] :is(.deck-button, .deck-hold) {
+  background: var(--m-sc); color: var(--m-on-sc); border: 0; border-radius: 20px; font-weight: 500;
+  transition: transform .2s var(--m-spring), border-radius .25s var(--m-ease), background .2s;
+}
+body[data-theme="material"] :is(.deck-button:active, .deck-hold.held) { background: var(--m-primary); color: var(--m-on-primary); border-radius: 12px; transform: scale(.97); }
+body[data-theme="material"] :is(.deck-button.selected, .deck-button[aria-pressed=true]) { background: var(--m-pc); color: var(--m-on-pc); }
+body[data-theme="material"] .deck-channel { background: var(--m-s3); border: 0; border-radius: 20px; padding: 10px 12px; }
+
+/* ---------- radio, trackpad ---------- */
+body[data-theme="material"] .radio-card,
+body[data-theme="material"] .radio-carousel .radio-card { background: var(--m-s3); border: 0; border-radius: 20px; box-shadow: none; }
+body[data-theme="material"] .radio-card.is-playing,
+body[data-theme="material"] .radio-carousel .radio-card.is-playing { background: var(--m-pc); box-shadow: none; }
+body[data-theme="material"] .radio-card.is-playing .radio-name { color: var(--m-on-pc); }
+body[data-theme="material"] .radio-carousel .radio-card.is-playing::after { background: var(--m-primary); box-shadow: none; }
+body[data-theme="material"] .deck-trackpad { background: var(--m-s3); border: 0; border-radius: var(--m-shape); }
+
+/* ---------- system chrome: page indicator, sheets, snackbars ---------- */
+body[data-theme="material"] #dots i { background: var(--m-outline-var); }
+body[data-theme="material"] #dots i.on { width: 20px; background: var(--m-primary); }
+body[data-theme="material"] :is(#navCard, #ptitle, #navChip) {
+  background: var(--m-s3); border: 0;
+  box-shadow: 0 2px 6px 2px rgba(0, 0, 0, .15), 0 1px 2px rgba(0, 0, 0, .3);
+}
+body[data-theme="material"] #navCard { border-radius: 28px; padding: 16px 16px 16px 14px; }
+body[data-theme="material"] #overview { background: var(--m-surface); }
+body[data-theme="material"] .ov-tile { background: var(--m-s2); border: 0; border-radius: 16px; }
+body[data-theme="material"] .ov-head { font-weight: 500; font-size: 18px; }
+body[data-theme="material"] .ov-tile.on { background: var(--m-pc); box-shadow: none; }
+body[data-theme="material"] .ov-map span { background: var(--m-s4); border-radius: 5px; }
+body[data-theme="material"] .ov-tile.on .ov-map span { background: color-mix(in oklab, var(--m-on-pc) 22%, var(--m-pc)); }
+body[data-theme="material"] .ov-tile.on .ov-name { color: var(--m-on-pc); }
+
+/* process sheet */
+body[data-theme="material"] .p-sheet { background: var(--m-s1); box-shadow: 0 0 0 100vmax rgba(0, 0, 0, .5), 0 -6px 24px rgba(0, 0, 0, .35); }
+body[data-theme="material"] .p-sheet::before { width: 32px; margin-left: -16px; background: color-mix(in oklab, var(--m-on-var) 45%, transparent); }
+body[data-theme="material"] .ps-title b { font-weight: 500; font-size: 18px; }
+body[data-theme="material"] .pi { background: var(--m-s3); min-height: 52px; }
+body[data-theme="material"] .pi .ps-btn.danger { background: transparent; color: #ffb4ab; box-shadow: inset 0 0 0 1px color-mix(in srgb, #ffb4ab 45%, transparent); padding: 8px 18px; }
+body[data-theme="material"] #psAll.danger { background: #ffb4ab; color: #690005; }
+/* toasts are M3 snackbars: inverse surface, a tonal badge for the kind */
+body[data-theme="material"] .toast {
+  background: var(--m-on-surface); color: #1d1b20;
+  -webkit-backdrop-filter: none; backdrop-filter: none;
+  border-radius: 16px; padding: 8px 20px 8px 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .4), 0 2px 4px rgba(0, 0, 0, .25);
+}
+body[data-theme="material"] .t-msg { color: #1d1b20; }
+body[data-theme="material"] .t-body b + .t-msg { color: #49454f; }
+body[data-theme="material"] .t-ic { background: var(--m-on-pc); color: var(--m-pc); }
+body[data-theme="material"] .toast.ok .t-ic { background: #b8f0c6; color: #0b5223; }
+body[data-theme="material"] .toast.err .t-ic { background: #ffdad6; color: #93000a; }
+body[data-theme="material"] .toast.warn .t-ic { background: #ffdeac; color: #5f3c00; }
+
+/* permission prompt: M3 modal bottom sheet */
+body[data-theme="material"] #approval { background: rgba(0, 0, 0, .5); }
+body[data-theme="material"] .ap-card { --ap-accent: #f0a080; background: var(--m-s1); box-shadow: 0 -6px 24px rgba(0, 0, 0, .35); }
+body[data-theme="material"] .ap-grab { width: 32px; background: var(--m-outline-var); background: color-mix(in oklab, var(--m-on-var) 45%, transparent); }
+body[data-theme="material"] .ap-logo { background: #5b2a1a; color: #ffb59a; }
+body[data-theme="material"] .ap-count { background: var(--m-sc); color: var(--m-on-sc); }
+body[data-theme="material"] .ap-tool { font-weight: 400; font-size: 26px; letter-spacing: 0; }
+body[data-theme="material"] .ap-detail { background: var(--m-s3); box-shadow: none; color: var(--m-on-surface); }
+body[data-theme="material"] .ap-btn.allow { background: var(--m-primary); color: var(--m-on-primary); }
+body[data-theme="material"] .ap-btn.deny { background: var(--m-sc); color: var(--m-on-sc); }
+body[data-theme="material"] #offline { background: #93000a; color: #ffdad6; }
+
+/* analog clock: primary hands */
+body[data-theme="material"] .analog .face { fill: var(--m-s2); stroke: none; }
+body[data-theme="material"] .analog .hh { stroke: var(--m-primary); }
+body[data-theme="material"] .analog .sh { stroke: var(--m-on-tc); }
+
+@media (prefers-reduced-motion: reduce) {
+  body[data-theme="material"] * { transition-duration: 0s !important; }
+}
+
+/* picture icons (uploaded or detected) carry the key: bigger, with a soft lift */
+body[data-theme="material"] .key .k-icon.k-icon-img img {
+  width: clamp(26px, 13cqmin, 56px); height: clamp(26px, 13cqmin, 56px);
+  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, .3));
+}
+
+/* armed (tap again to confirm) must stay unmistakable over the tonal / outlined styles above */
+body[data-theme="material"] .ps-btn.armed,
+body[data-theme="material"] .pi .ps-btn.danger.armed { background: #ffb4ab; color: #690005; box-shadow: none; }
+
+/* ================================================================ screens */
+
+/* ---------- page name pill + status chips ---------- */
+body[data-theme="material"] #ptitle { background: var(--m-pc); color: var(--m-on-pc); box-shadow: 0 4px 12px rgba(0, 0, 0, .35); }
+body[data-theme="material"] #ptitle .pt-ic { background: color-mix(in srgb, var(--m-on-pc) 18%, transparent); }
+body[data-theme="material"] #ptitle b { font-weight: 500; }
+body[data-theme="material"] .st-host { background: linear-gradient(90deg, var(--m-pc), color-mix(in oklab, var(--m-pc) 25%, var(--m-s2))); }
+body[data-theme="material"] .st-host b { color: var(--m-on-pc); font-weight: 500; }
+body[data-theme="material"] .st-host small { color: color-mix(in oklab, var(--m-on-pc) 70%, transparent); }
+body[data-theme="material"] .st-ic { background: var(--m-primary); color: var(--m-on-primary); }
+body[data-theme="material"] .st-ic::after { box-shadow: 0 0 0 2px var(--m-pc); }
+body[data-theme="material"] .st-chip { background: var(--m-s3); color: var(--m-on-var); }
+body[data-theme="material"] .st-chip b { color: var(--m-on-surface); font-weight: 500; }
+
+/* ---------- AI quotas ---------- */
+body[data-theme="material"] .q-card {
+  border: 0; border-radius: var(--m-shape);
+  background: linear-gradient(165deg, color-mix(in oklab, var(--q) 30%, var(--m-s1)) 0%, var(--m-s1) 62%, color-mix(in oklab, var(--q) 10%, var(--m-s1)) 100%);
+}
+body[data-theme="material"] .q-name { font-weight: 500; font-size: 17px; }
+body[data-theme="material"] .q-logo {
+  width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-size: 16px;
+  background: color-mix(in oklab, var(--q) 30%, var(--m-s3)); color: color-mix(in oklab, var(--q) 60%, white);
+}
+body[data-theme="material"] .q-plan { border-radius: 999px; padding: 3px 10px; font-weight: 500; }
+body[data-theme="material"] .q-dial .bg { stroke: color-mix(in oklab, var(--qc, var(--q)) 22%, var(--m-s3)); stroke-width: 10; }
+body[data-theme="material"] .q-dial .fg { stroke-width: 10; }
+body[data-theme="material"] .q-dial .pace { stroke: var(--m-on-surface); stroke-width: 2; opacity: .75; }
+body[data-theme="material"] .q-pct { font-weight: 400; font-size: min(11cqh, 32px); }
+body[data-theme="material"] .q-label { font-weight: 500; font-size: 13px; margin-top: 8px; }
+body[data-theme="material"] .q-reset { color: var(--m-on-var); }
+/* status lines become tonal chips */
+body[data-theme="material"] :is(.q-left, .q-pace) {
+  display: inline-block; align-self: center; margin-top: 5px; padding: 3px 10px; border-radius: 999px;
+  font-size: 11.5px; font-weight: 500; background: var(--m-s4); color: var(--m-on-var);
+}
+body[data-theme="material"] .q-left { background: rgba(110, 231, 160, .16); color: #8ff0b4; }
+body[data-theme="material"] .q-pace.calm { background: rgba(110, 231, 160, .16); color: #8ff0b4; }
+body[data-theme="material"] .q-pace.fast { background: rgba(252, 211, 77, .16); color: #fcd877; }
+body[data-theme="material"] .q-pace.over { background: rgba(255, 180, 171, .16); color: #ffb4ab; }
+body[data-theme="material"] .q-pace:empty, body[data-theme="material"] .q-left:empty { display: none; }
+body[data-theme="material"] .q-details { border-top: 0; background: color-mix(in srgb, var(--m-s3) 70%, transparent); border-radius: 16px; padding: 8px 12px; margin-top: 6px; font-size: 11.5px; }
+
+/* ---------- sessions ---------- */
+body[data-theme="material"] .s-list { grid-auto-rows: 58px; gap: 8px; }
+body[data-theme="material"] .sess { background: var(--m-s3); border: 0; border-radius: 18px; gap: 12px; padding: 0 12px 0 10px; transition: transform .2s var(--m-spring), background .2s; }
+body[data-theme="material"] .sess:active { transform: scale(.97); }
+body[data-theme="material"] .sess .st { display: none; }
+/* the tool is an avatar; its status is a dot on the avatar's corner */
+body[data-theme="material"] .sess .tl {
+  position: relative; flex: 0 0 36px; width: 36px; height: 36px; border-radius: 50%;
+  display: grid; place-items: center; font-size: 17px;
+}
+body[data-theme="material"] .sess .tl.claude { background: #d97757; color: #fff; }
+body[data-theme="material"] .sess .tl.codex { background: var(--m-s4); color: var(--m-on-surface); }
+body[data-theme="material"] .sess .tl-st {
+  display: block; position: absolute; right: -1px; bottom: -1px; width: 12px; height: 12px; border-radius: 50%;
+  background: var(--m-outline-var); box-shadow: 0 0 0 2.5px var(--m-s3);
+}
+body[data-theme="material"] .sess.busy .tl-st { background: #fcd34d; animation: pulse 1.2s ease-in-out infinite; }
+body[data-theme="material"] .sess.shell .tl-st { background: #93c5fd; animation: pulse 1.6s ease-in-out infinite; }
+body[data-theme="material"] .sess.waiting .tl-st { background: #ff8a80; animation: pulse .8s ease-in-out infinite; }
+body[data-theme="material"] .sess.waiting { background: color-mix(in oklab, #ffb4ab 18%, var(--m-s3)); }
+body[data-theme="material"] .sess.waiting .tl-st { box-shadow: 0 0 0 2.5px color-mix(in oklab, #ffb4ab 18%, var(--m-s3)); }
+body[data-theme="material"] .sess.busy { background: color-mix(in oklab, var(--accent) 12%, var(--m-s3)); }
+body[data-theme="material"] .sess.busy .tl-st { box-shadow: 0 0 0 2.5px color-mix(in oklab, var(--accent) 12%, var(--m-s3)); }
+body[data-theme="material"] .sess.idle { opacity: .7; }
+body[data-theme="material"] .sess .nm { font-size: 14px; font-weight: 500; }
+body[data-theme="material"] .sess-meta { font-size: 11.5px; color: var(--m-on-var); }
+body[data-theme="material"] .sess .ds { font-size: 11.5px; font-weight: 500; padding: 3px 9px; border-radius: 999px; background: color-mix(in srgb, var(--m-on-surface) 8%, transparent); color: var(--m-on-var); }
+body[data-theme="material"] .sess.waiting .ds { background: rgba(255, 180, 171, .2); color: #ffcbc4; }
+body[data-theme="material"] .sess.busy .ds { background: rgba(252, 211, 77, .16); color: #fcd877; }
+body[data-theme="material"] .w-sum { color: var(--m-on-var); }
+/* session details sheet */
+body[data-theme="material"] .session-panel, body[data-theme="material"] .session-panel-head { background: var(--m-s1); }
+body[data-theme="material"] .sheet-grab::before { width: 32px; margin-left: -16px; background: color-mix(in oklab, var(--m-on-var) 45%, transparent); }
+body[data-theme="material"] .session-panel h2 { font-weight: 400; font-size: 24px; }
+body[data-theme="material"] .session-detail-row { border-top-color: var(--m-outline-var); font-size: 13px; padding: 9px 0; }
+body[data-theme="material"] .session-close { width: 40px; height: 40px; border-radius: 50%; background: var(--m-sc); color: var(--m-on-sc); display: grid; place-items: center; padding: 0; }
+/* GitHub */
+body[data-theme="material"] .gh-bell { background: var(--m-sc); color: var(--m-on-sc); border-radius: 999px; padding: 3px 10px; }
+body[data-theme="material"] .gh-sec { font-size: 12px; color: var(--m-on-var); margin-top: 6px; }
+
+/* ---------- system ---------- */
+body[data-theme="material"] .track { height: 10px; border-radius: 5px; background: color-mix(in oklab, var(--c, var(--accent)) 16%, var(--m-s4)); }
+body[data-theme="material"] .track i { border-radius: 5px; }
+body[data-theme="material"] .m-row { font-size: 12.5px; margin-bottom: 5px; }
+body[data-theme="material"] .m-row span:last-child { color: var(--m-on-surface); font-weight: 500; }
+body[data-theme="material"] .w-chart .chip { border: 0; background: color-mix(in srgb, var(--m-on-surface) 9%, transparent); border-radius: 999px; padding: 4px 10px; font-weight: 500; }
+body[data-theme="material"] .s-main b { font-size: clamp(22px, 18cqh, 42px); }
+
+/* ---------- processes: a padded card of tiles; each tile fills up to its share of the load ---------- */
+body[data-theme="material"] .w-processes.card { padding: 12px 12px 12px; gap: 10px; }
+body[data-theme="material"] .p-head { height: 36px; gap: 10px; padding-left: 4px; }
+body[data-theme="material"] .w-processes .s-label { font-size: 16px; font-weight: 500; color: var(--m-on-surface); }
+body[data-theme="material"] .p-sum { font-size: 12px; color: var(--m-on-var); }
+body[data-theme="material"] .p-grid { gap: 8px; }
+body[data-theme="material"] .proc {
+  --tint: color-mix(in oklab, var(--hue, var(--m-primary)) 30%, var(--m-s2));
+  border-radius: 16px; gap: 12px; padding: 0 14px 0 10px;
+  background: linear-gradient(90deg, var(--tint) 0, var(--tint) var(--w, 0%), var(--m-s2) var(--w, 0%));
+  transition: background .6s var(--m-ease), transform .2s var(--m-spring);
+}
+body[data-theme="material"] .proc:active { transform: scale(.98); background: var(--m-s3); }
+body[data-theme="material"] .p-ico { width: 34px; height: 34px; flex: 0 0 34px; font-size: 14px; box-shadow: 0 2px 6px rgba(0, 0, 0, .25); }
+body[data-theme="material"] .p-title { display: flex; gap: 6px; align-items: center; }
+body[data-theme="material"] .p-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+body[data-theme="material"] .p-t { font-size: 14px; font-weight: 500; }
+body[data-theme="material"] .p-count { font-size: 11px; font-weight: 500; padding: 1px 7px; border-radius: 999px; background: color-mix(in srgb, var(--m-on-surface) 10%, transparent); color: var(--m-on-var); }
+body[data-theme="material"] .p-count:empty { display: none; }
+body[data-theme="material"] .p-lock .ico { width: 12px; height: 12px; color: var(--m-on-var); vertical-align: -1px; }
+body[data-theme="material"] .p-bar { display: none; }
+body[data-theme="material"] .p-nums b { font-size: 16px; font-weight: 500; letter-spacing: -0.01em; }
+body[data-theme="material"] .p-nums small { font-size: 11.5px; color: var(--m-on-var); }
+
+/* ---------- music: the artwork tints the whole card, and progress waves while playing ---------- */
+body[data-theme="material"] .w-media { isolation: isolate; }
+body[data-theme="material"] .w-media::before {
+  content: ""; position: absolute; top: -40px; right: -40px; bottom: -40px; left: -40px; z-index: -1;
+  background: var(--art, none) center / cover no-repeat;
+  filter: blur(42px) saturate(1.6) brightness(.5);
+  opacity: 0; transition: opacity .8s ease;
+}
+body[data-theme="material"] .w-media[style*="--art"]::before { opacity: 1; }
+body[data-theme="material"] .w-media.playing .fill {
+  height: 10px; border-radius: 0; background: var(--m-primary);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 10'%3E%3Cpath d='M0 5Q5 1 10 5T20 5' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E") 0 50% / 20px 10px repeat-x;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 10'%3E%3Cpath d='M0 5Q5 1 10 5T20 5' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E") 0 50% / 20px 10px repeat-x;
+  animation: m-wave 1.2s linear infinite;
+}
+@keyframes m-wave { to { -webkit-mask-position: 20px 50%; mask-position: 20px 50%; } }
+body[data-theme="material"] .w-media .m-title { letter-spacing: -0.01em; }
+body[data-theme="material"] .w-media .m-source-icon svg { width: 1.4em; height: 1.4em; }
+@media (prefers-reduced-motion: reduce) { body[data-theme="material"] .w-media.playing .fill { animation: none; } }
+body[data-theme="material"] .m-dots button.on { background: var(--m-primary); }
+body[data-theme="material"] .st-chip.smini { background: rgba(255, 180, 171, .18); color: #ffcbc4; }
+body[data-theme="material"] .st-chip.upd { background: rgba(147, 197, 253, .16); color: #b9d6ff; }
+
+/* ---------- stat cards: icon badge, big number, share ring, full-bleed sparkline ---------- */
+body[data-theme="material"] .w-stat.card { padding: clamp(8px, 10cqh, 14px) clamp(10px, 7cqw, 16px); }
+body[data-theme="material"] .t-label { gap: 8px; font-size: clamp(11px, 11cqh, 13.5px); }
+body[data-theme="material"] .ts-ic {
+  display: grid; place-items: center; flex: none; width: 2em; height: 2em; border-radius: 50%;
+  background: color-mix(in oklab, var(--c) 32%, transparent); color: color-mix(in oklab, var(--c) 55%, white);
+}
+body[data-theme="material"] .ts-ic .ico { width: 1.15em; height: 1.15em; }
+body[data-theme="material"] .t-ring {
+  display: block; position: absolute; top: clamp(8px, 10cqh, 14px); right: clamp(10px, 7cqw, 16px);
+  width: clamp(22px, 22cqh, 34px); height: clamp(22px, 22cqh, 34px); border-radius: 50%;
+  background: conic-gradient(var(--c) calc(var(--p, 0) * 1%), color-mix(in oklab, var(--c) 18%, transparent) 0);
+  -webkit-mask: radial-gradient(circle, transparent 54%, #000 57%); mask: radial-gradient(circle, transparent 54%, #000 57%);
+  transition: background .6s;
+}
+body[data-theme="material"] .t-ring[hidden] { display: none; }
+body[data-theme="material"] .t-val { margin-top: clamp(2px, 4cqh, 8px); }
+body[data-theme="material"] .t-val b { font-size: clamp(20px, min(34cqh, 24cqw), 52px); font-weight: 400; letter-spacing: -0.035em; }
+body[data-theme="material"] .t-val small { font-size: clamp(11px, 13cqh, 17px); }
+body[data-theme="material"] .w-stat canvas { height: 46%; opacity: .85; }
+
+/* ---------- quick launch: quick-settings style tiles on a full launcher, compact keys elsewhere ---------- */
+body[data-theme="material"] .key {
+  background: linear-gradient(135deg, color-mix(in oklab, var(--k, var(--accent)) 34%, var(--m-s2)) 0%, var(--m-s2) 75%);
+}
+body[data-theme="material"] .key.toggle.on { background: color-mix(in oklab, var(--k, var(--accent)) 62%, var(--m-s2)); }
+body[data-theme="material"] .key.toggle.on .k-label { color: #fff; font-weight: 600; }
+body[data-theme="material"] .key.busy { opacity: .7; }
+body[data-theme="material"] .key.ok { box-shadow: inset 0 0 0 2px #6ee7a0; }
+body[data-theme="material"] .key.err { box-shadow: inset 0 0 0 2px #ffb4ab; }
+/* A full launcher is a frosted glass sheet with big, glossy app icons floating on it: no tile boxes, a soft glow
+   of the app's colour under each icon, a springy press, and the icons popping in one after another. */
+@container (min-height: 240px) and (min-width: 480px) {
+  body[data-theme="material"] .w-shortcuts .deck-grid {
+    padding: 14px; gap: 6px; border-radius: 32px;
+    background: linear-gradient(160deg, rgba(255, 255, 255, .07), rgba(255, 255, 255, .02) 60%);
+    -webkit-backdrop-filter: blur(20px) saturate(1.4); backdrop-filter: blur(20px) saturate(1.4);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .1), 0 18px 40px rgba(0, 0, 0, .25);
+  }
+  body[data-theme="material"] .w-shortcuts .key:not(.k-cover) {
+    background: none; border-radius: 24px; gap: 12px; flex-direction: column;
+    animation: key-in .55s cubic-bezier(.3, 1.4, .5, 1) backwards;
+  }
+  body[data-theme="material"] .w-shortcuts .key:not(.k-cover):active { background: rgba(255, 255, 255, .06); transform: none; border-radius: 24px; }
+  body[data-theme="material"] .w-shortcuts .key:not(.k-cover) .k-icon {
+    position: relative; display: grid; place-items: center;
+    width: min(20cqh, 80px); height: min(20cqh, 80px); border-radius: 30%; font-size: min(28cqh, 46px);
+    /* a glossy plate in the app's colour: lit from the top-left, deeper at the bottom, with a coloured shadow */
+    background:
+      radial-gradient(120% 90% at 25% 0%, rgba(255, 255, 255, .28), transparent 55%),
+      linear-gradient(160deg, color-mix(in oklab, var(--k, var(--accent)) 78%, white), color-mix(in oklab, var(--k, var(--accent)) 70%, #0b0d12));
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, .35), inset 0 -3px 8px rgba(0, 0, 0, .25),
+      0 10px 22px color-mix(in srgb, var(--k, var(--accent)) 45%, transparent), 0 3px 6px rgba(0, 0, 0, .3);
+    transition: transform .4s cubic-bezier(.3, 1.6, .5, 1), box-shadow .3s;
+  }
+  body[data-theme="material"] .w-shortcuts .key .k-icon.k-icon-img img {
+    width: 68%; height: 68%; border-radius: 0; filter: drop-shadow(0 4px 6px rgba(0, 0, 0, .35));
+  }
+  body[data-theme="material"] .w-shortcuts .key:not(.k-cover):active .k-icon { transform: scale(.86) translateY(3px); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .35), 0 4px 10px color-mix(in srgb, var(--k, var(--accent)) 45%, transparent); }
+  body[data-theme="material"] .w-shortcuts .key:not(.k-cover) .k-label { font-size: 14.5px; font-weight: 500; color: var(--m-on-surface); text-shadow: 0 1px 6px rgba(0, 0, 0, .5); }
+  body[data-theme="material"] .w-shortcuts .key.toggle.on { background: color-mix(in oklab, var(--k, var(--accent)) 22%, transparent); }
+  body[data-theme="material"] .w-shortcuts .key.toggle.on .k-icon { box-shadow: 0 0 0 3px var(--m-surface), 0 0 0 5px var(--k, var(--accent)), 0 10px 22px color-mix(in srgb, var(--k, var(--accent)) 55%, transparent); }
+  body[data-theme="material"] .w-shortcuts .key.toggle::before { top: calc(50% - min(10cqh, 40px) - 18px); right: calc(50% - min(10cqh, 40px) - 4px); z-index: 1; box-shadow: 0 0 0 2px var(--m-surface); }
+  body[data-theme="material"] .w-shortcuts .key.ok { box-shadow: none; background: rgba(110, 231, 160, .12); }
+  body[data-theme="material"] .w-shortcuts .key.err { box-shadow: none; background: rgba(255, 180, 171, .12); }
+  body[data-theme="material"] .w-shortcuts .key:nth-child(2) { animation-delay: .03s; }
+  body[data-theme="material"] .w-shortcuts .key:nth-child(3) { animation-delay: .06s; }
+  body[data-theme="material"] .w-shortcuts .key:nth-child(4) { animation-delay: .09s; }
+  body[data-theme="material"] .w-shortcuts .key:nth-child(5) { animation-delay: .12s; }
+  body[data-theme="material"] .w-shortcuts .key:nth-child(6) { animation-delay: .15s; }
+  body[data-theme="material"] .w-shortcuts .key:nth-child(7) { animation-delay: .18s; }
+  body[data-theme="material"] .w-shortcuts .key:nth-child(8) { animation-delay: .21s; }
+  body[data-theme="material"] .w-shortcuts .key:nth-child(n+9) { animation-delay: .24s; }
+}
+@keyframes key-in { from { opacity: 0; transform: translateY(14px) scale(.9); } }
+@media (prefers-reduced-motion: reduce) { body[data-theme="material"] .w-shortcuts .key { animation: none !important; } }
+body[data-theme="material"] .w-shortcuts.card { background: none; }
+
+/* session chat */
+body[data-theme="material"] .chat-msg.me { background: var(--m-pc); color: var(--m-on-pc); }
+body[data-theme="material"] .chat-msg.ai, body[data-theme="material"] .chat-typing { background: var(--m-s3); }
+body[data-theme="material"] .chat-tool { background: var(--m-s2); color: var(--m-on-var); }
+body[data-theme="material"] .chat-input { background: var(--m-s3); color: var(--m-on-surface); }
+body[data-theme="material"] .chat-input:focus { box-shadow: inset 0 0 0 2px var(--m-primary); }
+body[data-theme="material"] .chat-send { background: var(--m-primary); color: var(--m-on-primary); border-radius: 16px; }
+body[data-theme="material"] .session-facts summary { color: var(--m-on-var); }
+
+/* ---------- control center ---------- */
+body[data-theme="material"] .cc2-sl { background: linear-gradient(90deg, var(--m-primary) var(--p), var(--m-s4) var(--p)); }
+body[data-theme="material"] .cc2-sl .cc2-ic, body[data-theme="material"] .cc2-sl .cc2-name { color: var(--m-on-primary); }
+body[data-theme="material"] .cc2-sl .cc2-val { color: var(--m-on-var); }
+body[data-theme="material"] .cc2-sl:not([style*="--p: 0%"]) .cc2-name { mix-blend-mode: normal; }
+body[data-theme="material"] .cc2-search { background: var(--m-s3); }
+body[data-theme="material"] .cc2-scr { background: var(--m-s3); border-radius: 16px; }
+body[data-theme="material"] .cc2-scr.on { background: var(--m-pc); }
+body[data-theme="material"] .cc2-scr.on .ico, body[data-theme="material"] .cc2-scr.on b { color: var(--m-on-pc); }
+body[data-theme="material"] .cc2-scr.on small { color: color-mix(in oklab, var(--m-on-pc) 70%, transparent); }
+body[data-theme="material"] .cc2-count { padding: 2px 10px; border-radius: 999px; background: var(--m-sc); color: var(--m-on-sc); font-weight: 500; }
+
+@container (max-width: 230px) { body[data-theme="material"] .t-ring { display: none; } }
+body[data-theme="material"] .cc2-sl { --cc2-on: var(--m-on-primary); --cc2-off: var(--m-on-surface); }
+body[data-theme="material"] .cc2-sl .cc2-name, body[data-theme="material"] .cc2-sl .cc2-val { color: transparent; }

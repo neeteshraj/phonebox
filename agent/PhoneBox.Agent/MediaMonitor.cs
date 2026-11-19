@@ -132,6 +132,16 @@ public sealed class MediaMonitor(ILogger<MediaMonitor> log) : BackgroundService
         return ok;
     }
 
+    // ponytail: only the current session; GetSessions() would give the phone every player if Windows users want it
+    public IReadOnlyList<MediaSession> Sessions() => _snap is { } s
+        ? [new MediaSession("system", s.App, s.Title, s.Artist, s.Album, s.Playing, s.PosMs, s.DurMs, s.CanSeek, s.ArtId)]
+        : [];
+
+    public AlbumArt? SessionArt(string id) => id == "system" ? Art : null;
+
+    public Task<bool> Control(string action, long? ms, string? session) =>
+        string.IsNullOrEmpty(session) || session == "system" ? Control(action, ms) : Task.FromResult(false);
+
     public async Task<bool> PauseAsync()
     {
         var s = _mgr?.GetCurrentSession();

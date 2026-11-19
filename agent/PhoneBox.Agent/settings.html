@@ -518,7 +518,7 @@ dd { margin: 0; word-break: break-all; }
           <div class="field" style="margin:0"><label data-i18n="lang.label">Language</label>
             <select data-bind="display.language" id="displayLangSel"></select></div>
           <div class="field" style="margin:0"><label data-i18n="s.display.theme">Theme</label>
-            <select data-bind="display.theme"><option value="default" data-i18n="s.display.theme.default">Default</option><option value="amoled" data-i18n="s.display.theme.amoled">AMOLED black</option><option value="midnight" data-i18n="s.display.theme.midnight">Midnight blue</option><option value="warm" data-i18n="s.display.theme.warm">Warm</option><option value="graphite" data-i18n="s.display.theme.graphite">Graphite</option></select></div>
+            <select data-bind="display.theme"><option value="default" data-i18n="s.display.theme.default">Default</option><option value="amoled" data-i18n="s.display.theme.amoled">AMOLED black</option><option value="midnight" data-i18n="s.display.theme.midnight">Midnight blue</option><option value="warm" data-i18n="s.display.theme.warm">Warm</option><option value="graphite" data-i18n="s.display.theme.graphite">Graphite</option><option value="material" data-i18n="s.display.theme.material">Material You</option></select></div>
           <div class="field" style="margin:0"><label data-i18n="s.display.accent">Accent colour</label><input type="color" data-bind="display.accent" style="width:56px;height:36px;padding:2px"></div>
           <label class="check" style="margin-bottom:8px"><input type="checkbox" data-bind="display.artTint"> <span data-i18n="s.display.artTint">Tint the background with the album art</span></label>
         </div>
@@ -596,6 +596,7 @@ dd { margin: 0; word-break: break-all; }
         <div class="row" style="margin-bottom:12px"><button class="btn" id="hookBtn" data-i18n="s.claude.installHook">Install hook</button><span class="hint" id="hookState"></span></div>
         <div class="row" style="margin-bottom:8px"><label class="switch"><input type="checkbox" data-bind="claude.phoneApprovals"><span></span></label> <span data-i18n="s.claude.askOnPhone">Ask on the phone</span></div>
         <label class="check"><input type="checkbox" data-bind="claude.onlyWhenAway"> <span data-i18n="s.claude.onlyWhenAway">Only when I am away from the PC (no keyboard or mouse for a minute)</span></label>
+        <div class="row" style="margin-top:12px"><label class="switch"><input type="checkbox" data-bind="claude.phonePrompts"><span></span></label> <span data-i18n="s.claude.phonePrompts">Send prompts to sessions from the phone</span></div>
         <div class="field" style="max-width:260px;margin-top:12px"><label data-i18n="s.claude.timeout">Seconds to answer before the terminal takes over</label><input type="number" min="10" max="3600" data-bind="claude.timeoutSec" data-type="int"></div>
       </div>
 
@@ -2896,7 +2897,7 @@ async function loadInfo() {
 // The form reads every section it binds and renders, so a config without one — an older export, or a
 // hand-trimmed paste in Apply JSON — gets the same defaults a fresh load does before anything renders.
 function fillDefaults() {
-  cfg.pages = fitPages(cfg.pages); cfg.shortcuts ??= []; cfg.rules ??= []; cfg.display ??= {}; cfg.night = { enabled: true, start: '00:30', end: '07:30', brightness: 0.02, ...cfg.night }; cfg.weather ??= {}; cfg.weather.unit ??= 'celsius'; cfg.photos ??= { folder: '', subfolders: true }; cfg.lan ??= { enabled: false, port: 8766 }; cfg.updates ??= { auto: true, repo: 'ersinkoc/phonebox' }; cfg.claude ??= { phoneApprovals: true, timeoutSec: 90, onlyWhenAway: false };
+  cfg.pages = fitPages(cfg.pages); cfg.shortcuts ??= []; cfg.rules ??= []; cfg.display ??= {}; cfg.night = { enabled: true, start: '00:30', end: '07:30', brightness: 0.02, ...cfg.night }; cfg.weather ??= {}; cfg.weather.unit ??= 'celsius'; cfg.photos ??= { folder: '', subfolders: true }; cfg.lan ??= { enabled: false, port: 8766 }; cfg.updates ??= { auto: true, repo: 'ersinkoc/phonebox' }; cfg.claude ??= { phoneApprovals: true, timeoutSec: 90, onlyWhenAway: false, phonePrompts: false };
   cfg.codexBar ??= { providers: ['claude', 'codex', 'antigravity'], rotate: true, pageSize: 2, rotateInterval: 8 };
   for (const [k, v] of Object.entries({ language: 'auto', hour12: false, idleReturnSec: 90, switchCountdownSec: 3, touchGraceSec: 20, minDwellSec: 15, holdMaxMin: 30, keepAwake: true,
     showSeconds: true, vibrate: true, volumeKeys: true, artTint: true, proximityWake: true, orientation: 'landscape', theme: 'default', accent: '#2dd4bf' })) cfg.display[k] ??= v;

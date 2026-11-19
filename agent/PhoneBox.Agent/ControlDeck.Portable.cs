@@ -27,8 +27,9 @@ internal sealed class PortableDeckNative(
     }
     public bool Session(string id, int? volume, bool? muted) => false;
     public bool DefaultDevice(string id, int? role = null) => false;
-    public IReadOnlyList<DeckMonitor> Monitors() => [];
-    public bool Brightness(string id, int value) => false;
+    public IReadOnlyList<DeckMonitor> Monitors() => OperatingSystem.IsMacOS()
+        ? MacSystem.Displays().Select(d => new DeckMonitor(d.Id, d.Name, d.Brightness, d.Width, d.Height, d.Hz)).ToList() : [];
+    public bool Brightness(string id, int value) => OperatingSystem.IsMacOS() && uint.TryParse(id, out var display) && MacSystem.SetBrightness(display, value);
     public IReadOnlyList<DeckItem> PowerPlans() => [];
     public Task<bool> PlatformAction(string kind, string target, string? argument, int value, CancellationToken ct) => Task.FromResult(false);
     public Task<IReadOnlyList<DeckMedia>> Media(CancellationToken ct) => Task.FromResult<IReadOnlyList<DeckMedia>>(media.Snapshot() is { } m

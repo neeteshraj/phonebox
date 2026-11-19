@@ -309,6 +309,8 @@ public class LanTests
     [InlineData("/api/shortcuts/icon", true)]
     [InlineData("/api/settings/shortcut-icon", false)]
     [InlineData("/api/claude/hook", false)]
+    [InlineData("/api/sessions/prompt", true)]
+    [InlineData("/api/sessions/run", true)]
     [InlineData("/api/obs-test", false)]
     [InlineData("/api/ha/test", false)]
     [InlineData("/api/phones", false)]

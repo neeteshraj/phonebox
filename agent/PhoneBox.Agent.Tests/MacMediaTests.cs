@@ -148,4 +148,117 @@ public sealed class MacMediaTests
             try { await serving.WaitAsync(TimeSpan.FromSeconds(5)); } catch { }
         }
     }
+
+    [Fact]
+    public void TheYouTubeTabThatIsPlayingIsFoundAmongSeveral()
+    {
+        // what Now Playing reported and what Chrome's tabs said, with a notification count and invisible direction marks
+        const string playing = "Casa Tupka Anthemo | @Yo Yo Honey Singh  feat. Priyanshi | Full Video";
+        var tabs = new[]
+        {
+            ("https://www.youtube.com/watch?v=aaaaaaaaaaa", "Lo-fi beats to study to - YouTube"),
+            ("https://www.youtube.com/watch?v=vRjaGgDsWSo&list=RDF57P9C4SAW4&index=6", "(298) Casa Tupka Anthemo | \u202a@YoYoHoneySingh\u202c feat. Priyanshi | Full Video - YouTube"),
+            ("https://music.youtube.com/watch?v=bbbbbbbbbbb", "Casa Tupka Anthemo - YouTube Music"),
+        };
+        Assert.Equal(("YouTube", "vRjaGgDsWSo"), MediaMonitor.MatchYouTubeTab(playing, tabs));
+        Assert.Equal(("YouTube Music", "bbbbbbbbbbb"), MediaMonitor.MatchYouTubeTab("Casa Tupka Anthemo", tabs[2..]));
+        Assert.Equal(("", ""), MediaMonitor.MatchYouTubeTab("Something else entirely", tabs));
+        Assert.Equal("dQw4w9WgXcQ", MediaMonitor.YouTubeId("https://youtu.be/dQw4w9WgXcQ?t=3"));
+        Assert.Equal("dQw4w9WgXcQ", MediaMonitor.YouTubeId("https://www.youtube.com/shorts/dQw4w9WgXcQ"));
+    }
+
+    private static string Js(bool playing, double t, double d, string title = "", string artist = "", string art = "") =>
+        $$"""{"has":true,"p":{{(playing ? "true" : "false")}},"t":{{t}},"d":{{d}},"ti":"{{title}}","ar":"{{artist}}","al":"","art":"{{art}}"}""";
+
+    private static MediaMonitor.NowInfo Now(string bundle, string title, string app, bool playing = true) =>
+        new(new MediaSnapshot(app, title, "", "", playing, 5000, 200000, 7, true), bundle, title);
+
+    [Fact]
+    public void TwoYouTubeTabsSpotifyAndNetflixAreEachTheirOwnPlayer()
+    {
+        var chrome = string.Join("\n",
+            "11\t101\thttps://www.youtube.com/watch?v=aaaaaaaaaaa\t" + Js(true, 30, 200, "Blinding Lights (Official Video)", "TheWeekndVEVO") + "\t(3) Blinding Lights (Official Video) - YouTube",
+            "11\t102\thttps://www.youtube.com/watch?v=bbbbbbbbbbb\t" + Js(false, 12.5, 300) + "\tLo-fi beats - YouTube",
+            "12\t201\thttps://www.netflix.com/watch/81234567\t" + Js(false, 600, 2700, "Episode 3") + "\tNetflix",
+            "12\t202\thttps://www.youtube.com/\t" + """{"has":false,"p":false,"t":0,"d":0,"ti":"","ar":"","al":"","art":""}""" + "\tYouTube",
+            "12\t203\thttps://www.google.com/search?q=netflix.com/\t" + Js(true, 1, 1) + "\tnetflix.com/ - Google Search",
+            "12\t204\thttps://www.youtube.com/watch?v=ccccccccccc\t!Some other error\tAsleep - YouTube",
+            "garbage line");
+        var (tabs, blocked) = MediaMonitor.ParseBrowserTabs("chrome", chrome);
+        Assert.False(blocked);
+        Assert.Equal(["chrome:11:101", "chrome:11:102", "chrome:12:201"], tabs.Select(t => t.Id));
+        Assert.Equal(("YouTube", "Blinding Lights", "The Weeknd", true, 30000L), (tabs[0].App, tabs[0].Title, tabs[0].Artist, tabs[0].Playing, tabs[0].PosMs));
+        Assert.Equal("yt:aaaaaaaaaaa", tabs[0].ArtUrl);                        // no session artwork: the video thumbnail
+        Assert.Equal(("Lo-fi beats", 12500L, 300000L), (tabs[1].Title, tabs[1].PosMs, tabs[1].DurMs));
+        Assert.Equal(("Netflix", "Episode 3", false), (tabs[2].App, tabs[2].Title, tabs[2].Playing));
+
+        var apps = MediaMonitor.ParseApps("spotify\tplaying\tSong\tArtist\tAlbum\t12,5\t180.0\thttps://i.scdn.co/image/x\nmusic\tpaused\tTrack\tA\tB\t3\t200\t\n");
+        Assert.Equal(("Spotify", true, 12500L, 180000L, "https://i.scdn.co/image/x"), (apps[0].App, apps[0].Playing, apps[0].PosMs, apps[0].DurMs, apps[0].ArtUrl));
+        Assert.Equal(("music", false), (apps[1].Id, apps[1].Playing));
+
+        // Now Playing is the Spotify app: it comes first, once, under Spotify's id; then playing, then paused
+        var merged = MediaMonitor.MergeSessions(Now("com.spotify.client", "Song", "Spotify"), tabs.Concat(apps));
+        Assert.Equal(["spotify", "chrome:11:101", "chrome:11:102", "chrome:12:201", "music"], merged.Select(m => m.Id));
+        Assert.True(merged[0].NowPlaying);
+        Assert.Equal(5000, merged[0].PosMs);                                 // Now Playing's own numbers
+    }
+
+    [Fact]
+    public void NowPlayingAndItsTabAppearOnceUnderTheTabsId()
+    {
+        var (tabs, _) = MediaMonitor.ParseBrowserTabs("chrome", string.Join("\n",
+            "11\t101\thttps://www.youtube.com/watch?v=aaaaaaaaaaa\t" + Js(true, 30, 200, "Other video") + "\tOther video - YouTube",
+            "11\t102\thttps://www.youtube.com/watch?v=bbbbbbbbbbb\t" + Js(true, 50, 300, "Casa Tupka Anthemo | Full Video") + "\t(298) Casa Tupka Anthemo | ‪@YoYoHoneySingh‬ | Full Video - YouTube"));
+        var merged = MediaMonitor.MergeSessions(Now("com.google.Chrome", "Casa Tupka Anthemo | Full Video", "YouTube"), tabs);
+        Assert.Equal(["chrome:11:102", "chrome:11:101"], merged.Select(m => m.Id));
+        Assert.Equal("yt:bbbbbbbbbbb", merged[0].ArtUrl);
+
+        // another browser's tab of the same name is not this one; with nothing playing the list is empty
+        Assert.Equal(["system", "chrome:11:101", "chrome:11:102"], MediaMonitor.MergeSessions(Now("com.brave.Browser", "Casa Tupka Anthemo | Full Video", "Brave"), tabs).Select(m => m.Id));
+        Assert.Empty(MediaMonitor.MergeSessions(null, []));
+        Assert.Equal(["system"], MediaMonitor.MergeSessions(Now("org.videolan.vlc", "Movie", "vlc"), []).Select(m => m.Id));
+    }
+
+    [Fact]
+    public void WithoutJavaScriptFromAppleEventsMediaTabsAreListedByTitle()
+    {
+        var output = string.Join("\n",
+            "11\t101\thttps://www.youtube.com/watch?v=CcCw1ggftuQ&list=RD\t!Executing JavaScript through AppleScript is turned off. To turn it on, from the menu bar, go to View > Developer > Allow JavaScript from Apple Events.\t(299) Flo Rida - Right Round (feat. Ke$ha) [Official Video] - YouTube",
+            "11\t102\thttps://www.youtube.com/watch?v=dQw4w9WgXcQ\t!off\tRick Astley - Never Gonna Give You Up - YouTube",
+            "11\t103\thttps://www.youtube.com/results?search_query=x\t!off\tx - YouTube",
+            "11\t104\thttps://www.netflix.com/browse\t!off\tNetflix",
+            "11\t105\thttps://www.netflix.com/watch/1\t!off\tNetflix");
+        var (tabs, blocked) = MediaMonitor.ParseBrowserTabs("chrome", output);
+        Assert.True(blocked);
+        Assert.Equal(["chrome:11:101", "chrome:11:102", "chrome:11:105"], tabs.Select(t => t.Id));
+        Assert.All(tabs, t => Assert.False(t.Playing));
+        Assert.Equal(("Right Round (feat. Ke$ha)", "Flo Rida"), (tabs[0].Title, tabs[0].Artist));
+        Assert.Equal("yt:CcCw1ggftuQ", tabs[0].ArtUrl);
+
+        // the tab Now Playing reports takes its place, playing, with Now Playing's numbers
+        var merged = MediaMonitor.MergeSessions(Now("com.google.Chrome", "Never Gonna Give You Up", "YouTube"), tabs);
+        Assert.Equal(["chrome:11:102", "chrome:11:101", "chrome:11:105"], merged.Select(m => m.Id));
+        Assert.True(merged[0].Playing);
+        Assert.True(merged[0].NowPlaying);
+    }
+
+    [Fact]
+    public void ScriptsCarryNoQuotesFromThePageAndOnlyNumbersWeFormatted()
+    {
+        Assert.Contains("execute tab id tid of window id wid javascript js", MediaMonitor.BrowserScanScript("Google Chrome"));
+        Assert.Contains("do JavaScript js in tab i of window id wid", MediaMonitor.BrowserScanScript("Safari"));
+        Assert.Contains("m.currentTime=12.345;", MediaMonitor.TabControlJs("seek", 12345));
+        Assert.DoesNotContain("\"", MediaMonitor.TabControlJs("prev", null));
+        Assert.Null(MediaMonitor.TabControlJs("seek", null));
+        Assert.Equal("YouTube Music", MediaMonitor.MediaHostApp("https://music.youtube.com/watch?v=x"));
+        Assert.Null(MediaMonitor.MediaHostApp("https://notyoutube.com/watch"));
+    }
+
+    [Theory]
+    [InlineData("Don Omar - Danza Kuduro ft. Lucenzo", "DonOmarVEVO", "Danza Kuduro ft. Lucenzo", "Don Omar")]
+    [InlineData("Blinding Lights (Official Video)", "TheWeekndVEVO", "Blinding Lights", "The Weeknd")]
+    [InlineData("Tum Hi Ho", "Arijit Singh - Topic", "Tum Hi Ho", "Arijit Singh")]
+    [InlineData("How to cook rice - the easy way - part 2", "Chef John", "How to cook rice - the easy way - part 2", "Chef John")]
+    public void YouTubeMusicVideosShowTheSongAndTheArtist(string title, string channel, string song, string artist) =>
+        Assert.Equal((song, artist), MediaMonitor.CleanYouTube(title, channel));
 }

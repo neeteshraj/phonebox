@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace PhoneBox.Agent;
 
@@ -11,7 +12,9 @@ public sealed record AgentSession(string Id, string Tool, string Name, string Pr
     string? Model = null, string? Effort = null, long? TotalTokens = null, long? InputTokens = null,
     long? OutputTokens = null, long? CachedInputTokens = null, long? ReasoningTokens = null,
     long? LastInputTokens = null, long? ContextWindow = null, long? TurnStartedAt = null,
-    string? Outcome = null, string? LastTool = null);
+    string? Outcome = null, string? LastTool = null,
+    // the project folder, for SessionPrompts; stays on the PC (not in the "work" JSON)
+    [property: JsonIgnore] string? Cwd = null);
 
 /// <summary>
 /// Watches running AI coding sessions (local and read-only):
@@ -79,7 +82,8 @@ public sealed class SessionMonitor(ILogger<SessionMonitor> log) : BackgroundServ
                     WaitingFor: Str(r, "waitingFor"),
                     Since: Long(r, "statusUpdatedAt") ?? Long(r, "updatedAt") ?? 0,
                     StartedAt: Long(r, "startedAt") ?? 0,
-                    Pid: pid);
+                    Pid: pid,
+                    Cwd: cwd);
             }
             catch { /* file was being written: retry on the next pass */ }
             if (s is not null) yield return s;
@@ -136,7 +140,7 @@ public sealed class SessionMonitor(ILogger<SessionMonitor> log) : BackgroundServ
                     LastInputTokens: details.LastInputTokens, ContextWindow: details.ContextWindow,
                     TurnStartedAt: details.TurnStartedAt, Outcome: details.Lifecycle switch
                     { "task_complete" => "completed", "turn_aborted" => "aborted", _ => null },
-                    LastTool: details.LastTool);
+                    LastTool: details.LastTool, Cwd: cwd);
             }
             catch { }
             if (s is not null) yield return s;

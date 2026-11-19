@@ -1,4 +1,4 @@
-import { API, PANEL_HEADERS, api, applyState, bridge, D, evSeq, h, en, haptic, toast, store, t } from '../main.js';
+import { icon, API, PANEL_HEADERS, api, applyState, bridge, D, evSeq, h, en, haptic, toast, store, t } from '../main.js';
 import { W } from '../registry.js';
 
 let cached = null, at = 0, epoch = 0, pending = null;
@@ -1056,4 +1056,115 @@ W.trackpad = {
       }
     };
   }
+};
+
+// ---------------------------------------------------------------- Control center
+// Volume, display and keyboard brightness as thick sliders, Spotlight search, and the connected displays: a tap on
+// one moves the pointer (and so the focus) there. Reads /api/system/controls every 2 s while on screen.
+W.controlcenter = {
+  needs: ['state'],
+  create(box, { o }) {
+    box.classList.add('cc2');
+    const head = h('div', 'cc2-head', h('span', 's-label', o.title || 'Control center'), h('span', 'cc2-count'));
+    const sliders = h('div', 'cc2-sliders');
+    const side = h('div', 'cc2-side');
+    const form = h('form', 'cc2-search');
+    const q = document.createElement('input');
+    q.type = 'search'; q.enterKeyHint = 'search'; q.maxLength = 200; q.placeholder = 'Search on Mac';
+    form.append(icon('search'), q);
+    const screens = h('div', 'cc2-screens');
+    side.append(form, screens);
+    box.append(head, h('div', 'cc2-body', sliders, side));
+    let sys = null, fetchedAt = 0, busy = false;
+
+    // a thick pill slider with its icon inside, like Android's quick settings brightness bar
+    const slider = (glyph, label, send, onIcon) => {
+      const row = h('label', 'cc2-sl');
+      const input = document.createElement('input');
+      input.type = 'range'; input.min = '0'; input.max = '100'; input.step = '1';
+      input.setAttribute('aria-label', label);
+      const ic = h('button', 'cc2-ic', icon(glyph));
+      ic.type = 'button';
+      ic.setAttribute('aria-label', label);
+      const val = h('span', 'cc2-val');
+      row.append(input, ic, h('span', 'cc2-name', label), val);
+      let timer = 0, dragging = false, release = 0;
+      const paint = (v, text) => { row.style.setProperty('--p', v + '%'); val.textContent = text ?? v + '%'; };
+      input.addEventListener('input', () => {
+        dragging = true; clearTimeout(release);
+        paint(+input.value);
+        clearTimeout(timer);
+        timer = setTimeout(() => send(+input.value), 110);
+      });
+      input.addEventListener('change', () => { release = setTimeout(() => (dragging = false), 1500); });
+      if (onIcon) ic.addEventListener('click', (e) => { e.preventDefault(); haptic(); onIcon(); });
+      else ic.tabIndex = -1;
+      return {
+        row,
+        set(v, { disabled = false, text, hidden = false } = {}) {
+          row.hidden = hidden;
+          row.classList.toggle('off', disabled);
+          input.disabled = disabled;
+          if (!dragging) { if (v != null) input.value = v; paint(v ?? 0, text); }
+        },
+        glyph(g) { ic.replaceChildren(icon(g)); },
+      };
+    };
+    const post = (path) => api(path, 'POST', 3000).catch((e) => { if (e?.status) toast(t('panel.pcNoAnswer'), 'warn'); });
+    const vol = slider('volume', 'Volume', (v) => post('/volume?level=' + v), async () => {
+      try { const a = await api('/volume?op=mute', 'POST'); D.state.audio = a; draw(); } catch (_) {}
+    });
+    const scr = slider('sun', 'Display', (v) => { const d = target(); if (d) post(`/system/display/brightness?id=${encodeURIComponent(d.id)}&value=${v}`); });
+    const kbd = slider('keyboard', 'Keyboard', (v) => post('/system/keyboard?value=' + v));
+    sliders.append(vol.row, scr.row, kbd.row);
+    // the display whose brightness the slider drives: the built-in one when it can, else the first that can
+    const target = () => (sys?.displays || []).find((d) => d.builtin && d.brightness != null) || (sys?.displays || []).find((d) => d.brightness != null) || null;
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const text = q.value.trim();
+      haptic();
+      q.blur();
+      try { await api('/system/search?q=' + encodeURIComponent(text), 'POST', 4000); q.value = ''; toast(text ? `Searching “${text}” on the Mac` : 'Spotlight is open on the Mac', 'ok'); }
+      catch (err) { toast(err?.status === 400 ? 'Allow PhoneBox in System Settings › Privacy & Security › Accessibility' : t('panel.pcNoAnswer'), 'warn'); }
+    });
+
+    const drawScreens = () => {
+      const list = sys?.displays || [];
+      head.querySelector('.cc2-count').textContent = list.length ? `${list.length} ${list.length === 1 ? 'display' : 'displays'}` : '';
+      screens.replaceChildren(...list.map((d) => {
+        const b = h('button', 'cc2-scr' + (d.focused ? ' on' : ''), icon(d.builtin ? 'laptop' : 'monitor'),
+          h('span', 'cc2-scr-t', h('b', null, d.name), h('small', null, `${d.width}×${d.height}${d.hz ? ' · ' + Math.round(d.hz) + ' Hz' : ''}`)));
+        b.type = 'button';
+        b.setAttribute('aria-pressed', d.focused ? 'true' : 'false');
+        b.addEventListener('click', async () => {
+          haptic();
+          for (const x of list) x.focused = x.id === d.id; // shown at once; the next read confirms it
+          drawScreens();
+          try { await api('/system/display/focus?id=' + encodeURIComponent(d.id), 'POST', 3000); } catch (_) { toast(t('panel.pcNoAnswer'), 'warn'); }
+        });
+        return b;
+      }));
+    };
+    const draw = () => {
+      const a = D.state?.audio;
+      vol.set(a ? a.volume : null, { disabled: !a || a.canControl === false, text: a?.muted ? 'Muted' : undefined });
+      vol.glyph(a?.muted ? 'volumeX' : 'volume');
+      const d = target();
+      scr.set(d ? d.brightness : null, { disabled: !d, text: d ? undefined : 'n/a' });
+      const k = sys?.keyboard;
+      kbd.set(k?.brightness ?? null, { hidden: !k?.available, disabled: k?.brightness == null });
+      form.hidden = sys ? sys.search === false : false;
+      drawScreens();
+    };
+    const load = async () => {
+      if (busy || Date.now() - fetchedAt < 2000) return;
+      busy = true;
+      try { sys = await api('/system/controls'); fetchedAt = Date.now(); } catch (_) {}
+      finally { busy = false; }
+      draw();
+    };
+    draw();
+    return { update() { draw(); load(); } };
+  },
 };

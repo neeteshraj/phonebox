@@ -148,7 +148,7 @@ public sealed class DisplayConfig
     public bool VolumeKeys { get; set; } = true;
     /// <summary>landscape, portrait or auto (follow the phone). In portrait the widgets are arranged automatically.</summary>
     public string Orientation { get; set; } = "landscape";
-    /// <summary>default, amoled, midnight, warm or graphite.</summary>
+    /// <summary>default, amoled, midnight, warm, graphite or material.</summary>
     public string Theme { get; set; } = "default";
     /// <summary>Accent colour (background glow, page dots), e.g. "#2dd4bf".</summary>
     public string Accent { get; set; } = "#2dd4bf";
@@ -213,6 +213,8 @@ public sealed class ClaudeConfig
     public int TimeoutSec { get; set; } = 90;
     /// <summary>Only use the phone when the PC has been idle for a minute (you are away from the keyboard).</summary>
     public bool OnlyWhenAway { get; set; }
+    /// <summary>Let the phone send a prompt to a Claude Code / Codex session (runs the CLI's headless resume, see SessionPrompts).</summary>
+    public bool PhonePrompts { get; set; }
 }
 
 public sealed class PageConfig

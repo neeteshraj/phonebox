@@ -186,6 +186,32 @@ const ICONS = {
   pause: 'M6 4h4v16H6zM14 4h4v16h-4z',
   play: 'M6 3l14 9-14 9V3z',
   mic: 'M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3zM19 10v1a7 7 0 0 1-14 0v-1M12 18v4M8 22h8',
+  zap: 'M13 2 3 14h9l-1 8 10-12h-9l1-8z',
+  send: 'M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z',
+  search: 'M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.35-4.35',
+  volume: 'M11 5 6 9H2v6h4l5 4V5zM15.54 8.46a5 5 0 0 1 0 7.07M19.07 4.93a10 10 0 0 1 0 14.14',
+  volumeX: 'M11 5 6 9H2v6h4l5 4V5zM22 9l-6 6M16 9l6 6',
+  sun: 'M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10zM12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42',
+  stop: 'M6 6h12v12H6z',
+  tool: 'M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z',
+  cpu: 'M9 2v2M15 2v2M9 20v2M15 20v2M2 9h2M2 15h2M20 9h2M20 15h2M6 4h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM9 9h6v6H9z',
+  memory: 'M6 19v2M10 19v2M14 19v2M18 19v2M3 7h18a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1zM7 11h2v4H7zM15 11h2v4h-2z',
+  gpu: 'M2 6h18a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H2M2 21V3M9 12a2.5 2.5 0 1 0 5 0 2.5 2.5 0 0 0-5 0M17 12h1',
+  updown: 'M7 17V3M3 7l4-4 4 4M17 7v14M13 17l4 4 4-4',
+  thermo: 'M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z',
+  pulse: 'M22 12h-4l-3 9L9 3l-3 9H2',
+  wifi: 'M5 12.55a11 11 0 0 1 14.08 0M1.42 9a16 16 0 0 1 21.16 0M8.53 16.11a6 6 0 0 1 6.95 0M12 20h.01',
+  usb: 'M12 3v12M9 6l3-3 3 3M7 10v2a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-2M12 21a2 2 0 1 0 0-4 2 2 0 0 0 0 4z',
+  lock: 'M6 11h12a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1zM8 11V7a4 4 0 0 1 8 0v4',
+  bell: 'M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.94 1.94 0 0 0 3.4 0',
+  battery: 'M4 7h13a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2zM22 11v2',
+  headphones: 'M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a9 9 0 0 1 18 0v7a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3',
+  mouse: 'M12 2a7 7 0 0 0-7 7v6a7 7 0 0 0 14 0V9a7 7 0 0 0-7-7zM12 6v4',
+  keyboard: 'M4 5h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zM6 9h.01M10 9h.01M14 9h.01M18 9h.01M8 13h.01M12 13h.01M16 13h.01M7 16h10',
+  gamepad: 'M6 11h4M8 9v4M15 12h.01M18 10h.01M17.32 5H6.68a4 4 0 0 0-3.98 3.59l-.6 6A3 3 0 0 0 5.1 18c.8 0 1.5-.3 2.1-.9L9 15h6l1.8 2.1c.6.6 1.3.9 2.1.9a3 3 0 0 0 3-3.4l-.6-6A4 4 0 0 0 17.32 5z',
+  laptop: 'M5 5h14a1 1 0 0 1 1 1v10H4V6a1 1 0 0 1 1-1zM2 19h20',
+  pen: 'M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z',
+  phone: 'M7 2h10a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zM12 18h.01',
 };
 export function icon(name, cls = '') {
   const t = document.createElement('template');
@@ -242,8 +268,8 @@ export let toastTimer = 0;
 export function toast(msg, kind = '', title = '', seconds = 2.6) {
   const t = $('toast');
   const ic = { ok: 'check', err: 'err', warn: 'warn' }[kind] || 'info';
-  const msgSpan = h('span', null, icon(ic, 'm'), msg);
-  t.replaceChildren(...(title ? [h('b', null, title), msgSpan] : [msgSpan]));
+  // a round badge for the kind, then the text (title above the message); styled in style.css / material.css
+  t.replaceChildren(h('span', 't-ic', icon(ic)), h('span', 't-body', title ? h('b', null, title) : null, h('span', 't-msg', msg)));
   t.className = 'toast on ' + kind;
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => (t.className = 'toast ' + kind), Math.max(1, seconds) * 1000);
@@ -262,7 +288,8 @@ export function chart(canvas, series, opts = {}) {
   if (!canvas.clientWidth) return;
   const [g, w, hh, dpr] = sizeCanvas(canvas);
   g.clearRect(0, 0, w, hh);
-  if (opts.grid) {
+  const bold = document.body.dataset.theme === 'material';
+  if (opts.grid && !bold) {
     g.strokeStyle = 'rgba(255,255,255,0.06)';
     g.lineWidth = 1;
     for (let i = 1; i < 4; i++) { const y = Math.round((hh * i) / 4) + 0.5; g.beginPath(); g.moveTo(0, y); g.lineTo(w, y); g.stroke(); }
@@ -278,15 +305,16 @@ export function chart(canvas, series, opts = {}) {
     g.beginPath();
     g.moveTo(x0, y(d[0]));
     for (let i = 1; i < d.length; i++) g.lineTo(x0 + i * step, y(d[i]));
-    g.lineWidth = 1.6 * dpr;
+    g.lineWidth = (bold ? 2.6 : 1.6) * dpr;
     g.strokeStyle = s.color;
     g.lineJoin = 'round';
+    g.lineCap = 'round';
     g.stroke();
     g.lineTo(w, hh);
     g.lineTo(x0, hh);
     g.closePath();
     const grad = g.createLinearGradient(0, 0, 0, hh);
-    grad.addColorStop(0, s.color + '55');
+    grad.addColorStop(0, s.color + (bold ? '80' : '55'));
     grad.addColorStop(1, s.color + '00');
     g.fillStyle = grad;
     g.fill();
@@ -395,15 +423,36 @@ export function metricText(m, s) {
 // The condition names are i18n keys: they are translated when the line is drawn, not when this table is built, so a
 // language change applies without reloading the panel.
 export const WX = {
-  0: ['wx.clear', '☀️', '🌙'], 1: ['wx.mostlyClear', '🌤️', '🌙'], 2: ['wx.partlyCloudy', '⛅', '☁️'], 3: ['wx.overcast', '☁️', '☁️'],
-  45: ['wx.fog', '🌫️'], 48: ['wx.rimeFog', '🌫️'],
-  51: ['wx.lightDrizzle', '🌦️'], 53: ['wx.drizzle', '🌦️'], 55: ['wx.heavyDrizzle', '🌧️'], 56: ['wx.freezingDrizzle', '🌧️'], 57: ['wx.freezingDrizzle', '🌧️'],
-  61: ['wx.lightRain', '🌦️'], 63: ['wx.rain', '🌧️'], 65: ['wx.heavyRain', '🌧️'], 66: ['wx.freezingRain', '🌧️'], 67: ['wx.freezingRain', '🌧️'],
-  71: ['wx.lightSnow', '🌨️'], 73: ['wx.snow', '🌨️'], 75: ['wx.heavySnow', '❄️'], 77: ['wx.snowGrains', '🌨️'],
-  80: ['wx.lightShowers', '🌦️'], 81: ['wx.showers', '🌧️'], 82: ['wx.heavyShowers', '⛈️'], 85: ['wx.snowShowers', '🌨️'], 86: ['wx.heavySnowShowers', '❄️'],
-  95: ['wx.thunderstorm', '⛈️'], 96: ['wx.thunderstormHail', '⛈️'], 99: ['wx.severeHail', '⛈️'],
+  0: ['wx.clear', 'sun', 'moon'], 1: ['wx.mostlyClear', 'sunCloud', 'moonCloud'], 2: ['wx.partlyCloudy', 'sunCloud', 'moonCloud'], 3: ['wx.overcast', 'cloud', 'cloud'],
+  45: ['wx.fog', 'fog'], 48: ['wx.rimeFog', 'fog'],
+  51: ['wx.lightDrizzle', 'drizzle'], 53: ['wx.drizzle', 'drizzle'], 55: ['wx.heavyDrizzle', 'rain'], 56: ['wx.freezingDrizzle', 'sleet'], 57: ['wx.freezingDrizzle', 'sleet'],
+  61: ['wx.lightRain', 'drizzle'], 63: ['wx.rain', 'rain'], 65: ['wx.heavyRain', 'rain'], 66: ['wx.freezingRain', 'sleet'], 67: ['wx.freezingRain', 'sleet'],
+  71: ['wx.lightSnow', 'snow'], 73: ['wx.snow', 'snow'], 75: ['wx.heavySnow', 'snow'], 77: ['wx.snowGrains', 'snow'],
+  80: ['wx.lightShowers', 'sunRain'], 81: ['wx.showers', 'rain'], 82: ['wx.heavyShowers', 'thunder'], 85: ['wx.snowShowers', 'snow'], 86: ['wx.heavySnowShowers', 'snow'],
+  95: ['wx.thunderstorm', 'thunder'], 96: ['wx.thunderstormHail', 'thunder'], 99: ['wx.severeHail', 'thunder'],
 };
-export const wxIcon = (code, day = 1) => { const x = WX[code] || [null, '🌡️']; return day === 0 && x[2] ? x[2] : x[1]; };
+// Weather glyphs drawn for the panel (flat, colourful, one 24px grid) instead of emoji, which render differently on
+// every Android version. Returned as SVG markup: the forecast lines are cached, so they must stay plain strings.
+const WXP = {
+  sun: '<circle cx="12" cy="12" r="4.4" fill="#FFC53D"/><g stroke="#FFC53D" stroke-width="2" stroke-linecap="round"><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/></g>',
+  moon: '<path d="M14.8 3.2a8.6 8.6 0 1 0 6 13.4 7 7 0 0 1-6-13.4z" fill="#FDE68A"/>',
+  cloud: '<path d="M7 19h10.2a4.3 4.3 0 0 0 .5-8.6A5.8 5.8 0 0 0 6.6 11.6 3.7 3.7 0 0 0 7 19z" fill="#E6EAF4"/><path d="M5.2 16.4A3.7 3.7 0 0 0 7 19h10.2a4.3 4.3 0 0 0 4-2.6z" fill="#C3CBDD"/>',
+  fog: '<g stroke="#CBD3E3" stroke-width="2" stroke-linecap="round"><path d="M4 9h16M6 13h14M4 17h12"/></g>',
+};
+const cloudUp = '<g transform="translate(0 -3)">' + WXP.cloud + '</g>';
+const drops = (c, n = 3) => '<g stroke="' + c + '" stroke-width="2" stroke-linecap="round">' + ['<path d="M8.5 19l-1 2.2"/>', '<path d="M12.5 19l-1 2.2"/>', '<path d="M16.5 19l-1 2.2"/>'].slice(0, n).join('') + '</g>';
+Object.assign(WXP, {
+  sunCloud: '<g transform="translate(-3.2 -3.4) scale(.78)">' + WXP.sun + '</g><g transform="translate(2 2.4) scale(.86)">' + WXP.cloud + '</g>',
+  moonCloud: '<g transform="translate(-2.4 -2.6) scale(.72)">' + WXP.moon + '</g><g transform="translate(2 2.4) scale(.86)">' + WXP.cloud + '</g>',
+  drizzle: cloudUp + drops('#7CB7FF', 2),
+  rain: cloudUp + drops('#4F9BFF'),
+  sunRain: '<g transform="translate(-3.6 -5) scale(.7)">' + WXP.sun + '</g>' + cloudUp + drops('#4F9BFF', 2),
+  sleet: cloudUp + drops('#7CB7FF', 2) + '<circle cx="16.3" cy="20.3" r="1.2" fill="#DCEBFF"/>',
+  snow: cloudUp + '<g fill="#DCEBFF"><circle cx="8.3" cy="19.6" r="1.3"/><circle cx="12.3" cy="21" r="1.3"/><circle cx="16.3" cy="19.6" r="1.3"/></g>',
+  thunder: '<g transform="translate(0 -3)"><path d="M7 19h10.2a4.3 4.3 0 0 0 .5-8.6A5.8 5.8 0 0 0 6.6 11.6 3.7 3.7 0 0 0 7 19z" fill="#AEB8CE"/></g><path d="M12.6 13.5 9.4 18.6h2.8l-1 4 3.6-5.6h-2.8l.6-3.5z" fill="#FFC53D"/>',
+});
+export const wxSvg = (kind) => `<svg class="wxg" viewBox="0 0 24 24" aria-hidden="true">${WXP[kind] || WXP.cloud}</svg>`;
+export const wxIcon = (code, day = 1) => { const x = WX[code] || [null, 'cloud']; return wxSvg(day === 0 && x[2] ? x[2] : x[1]); };
 /** The condition in the panel's language, or an em dash for a code Open-Meteo does not list. */
 export const wxText = (code) => { const x = WX[code]; return x ? t(x[0]) : '—'; };
 /** A temperature from Open-Meteo (always °C) rounded in the configured unit; the raw forecast stays in °C. */
@@ -480,7 +529,7 @@ export function wxBlock() {
       e.querySelector('.wx-desc').textContent = D.weather === null ? t('w.loading') : t('w.weatherUnavailable');
       return;
     }
-    e.querySelector('.wx-icon').textContent = l.icon;
+    e.querySelector('.wx-icon').innerHTML = l.icon;
     e.querySelector('.wx-temp').textContent = l.temp;
     e.querySelector('.wx-desc').textContent = l.desc;
     e.querySelector('.wx-range').textContent = l.range;
@@ -489,31 +538,52 @@ export function wxBlock() {
 }
 
 // ---------------------------------------------------------------- status line (clock widget)
+/** A battery that fills to the level (green, amber under 30, red under 15) with a bolt while charging, and the %. */
+export function batteryChip(level, plugged) {
+  const lv = Math.max(0, Math.min(100, Math.round(level)));
+  const c = plugged ? '#6ee7a0' : lv < 15 ? '#ff8a80' : lv < 30 ? '#fcd34d' : '#6ee7a0';
+  const w = (13.6 * lv / 100).toFixed(1);
+  const t = document.createElement('template');
+  t.innerHTML = `<span class="batt"><svg viewBox="0 0 24 14" aria-hidden="true"><rect x="1" y="1.5" width="18.5" height="11" rx="3" fill="none" stroke="currentColor" stroke-opacity=".55" stroke-width="1.4"/><rect x="3.4" y="3.9" width="${w}" height="6.2" rx="1.4" fill="${c}"/><path d="M21.2 5.4v3.2" stroke="currentColor" stroke-opacity=".55" stroke-width="1.6" stroke-linecap="round"/>${plugged ? '<path d="M11.4 2.6 8.3 7.6h2.6l-.7 3.8 3.4-5h-2.6l.4-3.8z" fill="#fff" stroke="#11141a" stroke-width=".8" stroke-linejoin="round"/>' : ''}</svg>${lv}%</span>`;
+  return t.content.firstElementChild;
+}
+
 export function phoneBattery() {
   if (!bridge) return '';
-  try { const b = JSON.parse(bridge.battery()); return `📱 ${b.level}%${b.plugged ? ' ⚡' : ''}`; } catch (_) { return ''; }
+  try { const b = JSON.parse(bridge.battery()); return batteryChip(b.level, b.plugged); } catch (_) { return ''; }
 }
 
 export function quotaProviders() { return D.quotas?.providers || []; }
 
+/** "Niteshs-MacBook-Pro.local" -> "Niteshs MacBook Pro": a computer name reads like a name, not a host. */
+export const prettyHost = (n) => String(n || 'PC').replace(/\.local$/i, '').replace(/[-_]+/g, ' ').trim() || 'PC';
+
 export function renderStatus(el, o = {}) {
   const via = transport();
-  const name = online ? (D.state?.host || 'PC') + (via === 'wifi' ? ' · ' + t('status.wiFi') : via === 'usb' ? ' · ' + t('status.usb') : '') : online === false ? t('panel.pcNotConnected') : t('panel.connecting');
-  const kids = [h('span', 'dot ' + (online ? 'on' : online === false ? 'off' : '')), h('span', null, name)];
+  // the computer: a laptop badge with a live dot, its name, and how the phone reaches it
+  const host = h('span', 'st-host' + (online ? '' : online === false ? ' off' : ' wait'), h('span', 'st-ic', icon('laptop')));
+  if (online) {
+    host.append(h('b', null, prettyHost(D.state?.host)));
+    if (via === 'wifi' || via === 'usb') host.append(h('small', null, icon(via === 'wifi' ? 'wifi' : 'usb'), via === 'wifi' ? t('status.wiFi') : t('status.usb')));
+  } else host.append(h('b', null, online === false ? t('panel.pcNotConnected') : t('panel.connecting')));
+  const kids = [host];
   const bat = phoneBattery();
-  if (bat) kids.push(h('span', 'sep', '·'), h('span', null, bat));
+  if (bat) kids.push(h('span', 'st-chip', bat));
   for (const p of quotaProviders()) {
     const l = p.limits?.[0];
     // Clocks saved before the Providers option have none: show every provider like before.
     if (!l || (o.providers != null && !o.providers.includes(p.id))) continue;
-    const s = h('span', 'qm', h('span', 'sep', '·'), p.name + ' ', h('b', null, Math.round(l.percent) + '%'));
-    if (l.percent >= 95) s.style.color = '#f87171'; else if (l.percent >= 80) s.style.color = '#fbbf24';
+    const pct = Math.round(l.percent);
+    const ring = h('span', 'qr');
+    ring.style.setProperty('--p', Math.min(100, Math.max(0, pct)));
+    const s = h('span', 'qm st-chip', ring, p.name + ' ', h('b', null, pct + '%'));
+    s.style.setProperty('--qc', pct >= 95 ? '#f87171' : pct >= 80 ? '#fbbf24' : (Q_STYLE[p.id]?.color || '#8ab4ff'));
     kids.push(s);
   }
   const waiting = (D.work?.sessions || []).filter((s) => s.status === 'waiting').length;
-  if (waiting) kids.push(h('span', 'sep', '·'), h('span', 'smini', t('status.waitingCount', { n: waiting })));
+  if (waiting) kids.push(h('span', 'smini st-chip', t('status.waitingCount', { n: waiting })));
   const u = D.state?.update;
-  if (u) kids.push(h('span', 'sep', '·'), h('span', 'upd', u.app && via !== 'usb' ? t('status.updateUsb', { version: u.latest }) : t('status.updateAvailable', { version: u.latest })));
+  if (u) kids.push(h('span', 'upd st-chip', u.app && via !== 'usb' ? t('status.updateUsb', { version: u.latest }) : t('status.updateAvailable', { version: u.latest })));
   el.replaceChildren(...kids);
   // Too long for the widget: drop the quota summaries, the most dispensable part.
   while (el.scrollWidth > el.clientWidth + 1 && el.querySelector('.qm')) [...el.querySelectorAll('.qm')].pop().remove();
@@ -965,6 +1035,10 @@ export function tickApproval() {
   const a = approvals[0];
   if (!a || $('approval').hidden) return;
   const left = a.expiresAt - Date.now();
+  // the small ring next to the time runs down until the terminal asks instead
+  const total = a.expiresAt - (a.createdAt || a.expiresAt - 90_000);
+  $('apBar').style.setProperty('--p', Math.max(0, Math.min(1, left / Math.max(1, total))));
+  $('apBar').hidden = a.kind === 'question';
   $('apTime').textContent = a.kind === 'question' ? t('panel.answerInTerminal')
     : left > 0 ? t('panel.askedInTerminalIn', { time: fmtTime(left) }) : t('panel.askingInTerminal');
   if (left < -3000) { approvals.shift(); renderApproval(); }
@@ -987,7 +1061,7 @@ export async function decide(decision) {
   try {
     await api(`/approvals/${encodeURIComponent(a.id)}?decision=${decision}`, 'POST', 4000);
     accepted = true;
-    if (decision === 'skip') toast(t('panel.questionWaiting'), 'warn');
+    if (decision === 'skip') toast(t(a.kind === 'question' ? 'panel.questionWaiting' : 'panel.answerInTerminal'), 'warn');
     else toast(t(decision === 'allow' ? 'panel.allowedTool' : 'panel.deniedTool', { tool: a.tool }), decision === 'allow' ? 'ok' : 'err');
   } catch (_) { toast(t('panel.alreadyAnswered'), 'warn'); }
   finally { submitting.delete(a.id); }
@@ -1007,14 +1081,22 @@ export async function decide(decision) {
   approvals = approvals.filter((x) => x.id !== a.id);
   renderApproval();
 }
+sheetDrag(document.querySelector('.ap-card'), () => decide('skip'), { scroller: '.ap-detail' });
+sheetDrag($('pSheet'), () => closeSheet(), { scroller: '.ps-list' });
 $('apAllow').addEventListener('click', () => decide('allow'));
 $('apDeny').addEventListener('click', () => decide('deny'));
 $('apSkip').addEventListener('click', () => decide('skip'));
+
+// Prompts sent to an AI session from the phone (POST /api/sessions/prompt): the agent pushes the run's whole
+// snapshot as "session-run" events; the session sheet listens while it is open.
+export const sessionRuns = new Map();      // session id -> last run snapshot
+export const runListeners = new Set();
 
 export function handleEvent(e) {
   if (PREVIEW && (e.kind === 'goto' || e.kind === 'back' || e.kind === 'reload')) return; // the editor picks the page
   if (e.kind === 'approval' || e.kind === 'approval-done') loadApprovals();
   else if (e.kind === 'notify' && e.data) handleNotify(e.data);
+  else if (e.kind === 'session-run' && e.data?.sessionId) { sessionRuns.set(e.data.sessionId, e.data); runListeners.forEach((f) => f(e.data)); }
   else if (e.kind === 'goto' && e.data) requestPage(e.data);
   else if (e.kind === 'back' && e.data) requestBack(e.data.rule);
   else if (e.kind === 'refresh') { loadConfig(); loadQuotas(); loadWork(); loadPush(); loadWeather(true); loadCalendar(); }
@@ -1491,15 +1573,55 @@ export function renderRulesBtn() {
   b.replaceChildren(icon(paused ? 'play' : 'pause', 'm'), paused ? t('panel.rulesPausedUntil', { time: fmtHM(new Date(rulesPaused)) }) : t('panel.pauseRules1h'));
 }
 
+/**
+ * Lets a bottom sheet be pulled down to dismiss it. The drag starts on the sheet itself, except on its buttons and
+ * inside a list that can still scroll up; past a third of its height (or a quick flick) it leaves, else it springs back.
+ */
+export function sheetDrag(sheet, dismiss, { scroller = null } = {}) {
+  let y0 = 0, t0 = 0, dy = 0, id = null;
+  const end = () => { sheet.style.transition = ''; id = null; };
+  sheet.addEventListener('pointerdown', (e) => {
+    if (e.button > 0 || e.target.closest('button, input, a, textarea, select')) return;
+    const list = scroller && e.target.closest(scroller);
+    if (list && list.scrollTop > 0) return;
+    id = e.pointerId; y0 = e.clientY; t0 = e.timeStamp; dy = 0;
+  });
+  sheet.addEventListener('pointermove', (e) => {
+    if (e.pointerId !== id) return;
+    dy = e.clientY - y0;
+    if (dy < 6 && !sheet.classList.contains('dragging')) return;
+    if (!sheet.classList.contains('dragging')) { sheet.classList.add('dragging'); sheet.setPointerCapture(id); }
+    // a little resistance upwards, free movement downwards
+    sheet.style.setProperty('--drag', `${dy > 0 ? dy : dy / 4}px`);
+  });
+  const release = (e) => {
+    if (e.pointerId !== id) return;
+    const was = sheet.classList.contains('dragging');
+    sheet.classList.remove('dragging');
+    if (!was) { end(); return; }
+    const fast = dy / Math.max(1, e.timeStamp - t0) > 0.6;
+    if (dy > sheet.offsetHeight / 3 || (fast && dy > 30)) {
+      sheet.style.setProperty('--drag', '110%');
+      setTimeout(() => { sheet.style.removeProperty('--drag'); dismiss(); }, 200);
+    } else sheet.style.removeProperty('--drag');
+    end();
+  };
+  sheet.addEventListener('pointerup', release);
+  sheet.addEventListener('pointercancel', release);
+}
+
 export let titleTimer = 0;
 export function flashTitle() {
   const p = pages[curPage];
   if (!p || pages.length < 2) return;
   const t = $('ptitle');
-  t.textContent = `${p.icon || ''} ${p.title}`.trim();
+  // icon badge, title, and where this page sits among the others
+  t.replaceChildren(h('span', 'pt-ic', p.icon || ''), h('b', null, p.title), h('small', null, `${curPage + 1} / ${pages.length}`));
+  t.classList.remove('on');
+  void t.offsetWidth; // restart the entrance when pages flip quickly
   t.classList.add('on');
   clearTimeout(titleTimer);
-  titleTimer = setTimeout(() => t.classList.remove('on'), 900);
+  titleTimer = setTimeout(() => t.classList.remove('on'), 1400);
 }
 
 export function onScroll() {
@@ -1830,7 +1952,7 @@ export function applyDisplay() {
   LOCALE = I18n ? I18n.getLocale() : 'en-GB';
   I18n?.applyDom();
   // theme and accent apply in the preview and the browser too
-  document.body.dataset.theme = ['amoled', 'midnight', 'warm', 'graphite'].includes(d.theme) ? d.theme : 'default';
+  document.body.dataset.theme = ['amoled', 'midnight', 'warm', 'graphite', 'material'].includes(d.theme) ? d.theme : 'default';
   const accent = hexToRgb(d.accent);
   const before = DEFAULT_AMBIENT;
   DEFAULT_AMBIENT = accent || '45, 212, 191';

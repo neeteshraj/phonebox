@@ -577,3 +577,55 @@ test('interface chrome uses inline SVG icons instead of emoji', async ({ page })
   await expect(page.locator('#toast svg.ico')).toBeVisible();
   expect(errors).toEqual([]);
 });
+
+test('several players at once show one dot each and switch on a dot tap, with controls going to that player', async ({ page }) => {
+  await page.goto('/panel/');
+  const card = page.locator('.w-media').first();
+  await expect(card.locator('.m-dots button')).toHaveCount(3);
+  await card.locator('.m-dots button').nth(2).click();
+  await expect(card.locator('.m-title')).toHaveText('Episode 4 · The Long Night');
+  await expect(card).not.toHaveClass(/\bplaying\b/); // the Netflix tab is paused
+  await card.locator('[data-media="playpause"]').click();
+  await expect(card).toHaveClass(/\bplaying\b/); // it plays, and the demo's Spotify player is left alone
+  await card.locator('.m-dots button').nth(0).click();
+  await expect(card.locator('.m-title')).not.toHaveText('Episode 4 · The Long Night');
+});
+
+test('a prompt can be sent to an AI session from its sheet, and the reply streams back', async ({ page }) => {
+  await page.goto('/panel/');
+  await expect(page.locator('.w-sessions').first()).toBeAttached();
+  // go to the page that carries the Sessions widget (widgets off screen are not drawn)
+  await page.evaluate(async () => {
+    const i = [...document.querySelectorAll('.page')].findIndex((p) => p.querySelector('.w-sessions'));
+    (await import('/panel/main.js')).goPage(i, true);
+  });
+  await page.locator('.sess:visible').first().click();
+  const sheet = page.locator('.session-panel');
+  await sheet.locator('.chat-input').fill('Run the tests');
+  await sheet.locator('.chat-send').click();
+  await expect(sheet.locator('.chat-msg.me')).toHaveText('Run the tests');
+  await expect(sheet.locator('.chat-tool')).toContainText('npm test');
+  await expect(sheet.locator('.chat-msg.ai').last()).toContainText('Everything passes.', { timeout: 10000 });
+  await expect(sheet.locator('.chat-send')).not.toHaveClass(/stop/);
+});
+
+test('the control center lists the displays, moves the focus to one, and has sliders and Spotlight search', async ({ page }) => {
+  await page.goto('/panel/');
+  await page.evaluate(() => {
+    const cfg = JSON.parse(localStorage.getItem('pb-demo-config') || '{}');
+    localStorage.setItem('pb-demo-config', JSON.stringify({ ...cfg, night: { enabled: false },
+      pages: [{ id: 'home', title: 'Home', enabled: true, widgets: [{ id: 'cc', type: 'controlcenter', x: 0, y: 0, w: 12, h: 6, options: {} }] }] }));
+  });
+  await page.reload();
+  const cc = page.locator('.w-controlcenter');
+  await expect(cc.locator('.cc2-scr')).toHaveCount(2);
+  await expect(cc.locator('.cc2-count')).toHaveText('2 displays');
+  await expect(cc.locator('.cc2-scr.on')).toContainText('Built-in Display');
+  await cc.locator('.cc2-scr', { hasText: 'DELL' }).click();
+  await expect(cc.locator('.cc2-scr.on')).toContainText('DELL');
+  await expect(cc.locator('.cc2-sl')).toHaveCount(3);
+  await expect(cc.locator('.cc2-sl').nth(1).locator('.cc2-val')).toHaveText('72%');
+  await cc.locator('.cc2-search input').fill('budget.xlsx');
+  await cc.locator('.cc2-search input').press('Enter');
+  await expect(page.locator('#toast')).toContainText('budget.xlsx');
+});

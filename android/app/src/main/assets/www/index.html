@@ -6,6 +6,7 @@
 <title>PhoneBox</title>
 <link rel="stylesheet" href="style.css">
 <link rel="stylesheet" href="controls.css">
+<link rel="stylesheet" href="material.css">
 <link rel="stylesheet" href="appearance.css">
 </head>
 <body>
@@ -32,13 +33,14 @@
 </div>
 
 <div id="approval" hidden>
-  <div class="ap-card">
-    <div class="ap-head"><span class="ap-logo">✳</span><span id="apSource">Claude Code</span><span class="ap-sep">·</span><span id="apProject"></span><span class="ap-count" id="apCount"></span></div>
+  <div class="ap-card" role="dialog" aria-modal="true" aria-labelledby="apTool">
+    <div class="ap-grab" aria-hidden="true"></div>
+    <div class="ap-head"><span class="ap-logo" aria-hidden="true">✳</span><span class="ap-who"><span id="apSource">Claude Code</span><span class="ap-sep">·</span><span id="apProject"></span></span><span class="ap-count" id="apCount"></span></div>
     <div class="ap-tool" id="apTool"></div>
     <div class="ap-desc" id="apDesc"></div>
     <pre class="ap-detail" id="apDetail"></pre>
     <div class="ap-foot">
-      <span class="ap-time" id="apTime"></span>
+      <i class="ap-timer" id="apBar" aria-hidden="true"></i><span class="ap-time" id="apTime"></span>
       <button class="ap-btn deny" id="apDeny" data-i18n="panel.deny">Deny</button>
       <button class="ap-btn allow" id="apAllow" data-i18n="panel.allow">Allow</button>
       <button class="ap-btn allow" id="apSkip" hidden data-i18n="panel.gotIt">Got it</button>

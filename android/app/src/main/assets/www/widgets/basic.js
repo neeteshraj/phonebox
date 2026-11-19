@@ -1,6 +1,11 @@
-import { $, API, D, LEVEL_COLOR, LOCALE, mediaHtml, METRICS, PANEL_HEADERS, PREVIEW, Q_STYLE, S_ORDER, ago, api, averageColor, buildLayout, buzz, cfg, cfgVersion, chart, color, cssVar, currentProcessesSort, emit, fillIcon, fmtClock, fmtDur, fmtHM, fmtMem, fmtReset, fmtTime, fmtValue, gotoProcesses, gpuMem, gpusOf, h, en, haptic, hasProcessesPage, hist, hour12, icon, keyButton, levelOf, media, metricText, online, openSheet, paceInfo, pad, prRow, pushView, quotaProviders, r1, registerProcessesSorter, renderStatus, ringSvg, setArtColor, configMark, configReadSince, localWriteStored, setMediaState, setVolDragging, shortDur, shortGpu, store, t, tick, toast, volDragging, wxBlock, wxDeg, wxIcon } from '../main.js';
+import { runListeners, sessionRuns, monogramColor, sheetDrag, $, API, D, LEVEL_COLOR, LOCALE, mediaHtml, METRICS, PANEL_HEADERS, PREVIEW, Q_STYLE, S_ORDER, ago, api, averageColor, buildLayout, buzz, cfg, cfgVersion, chart, color, cssVar, currentProcessesSort, emit, fillIcon, fmtClock, fmtDur, fmtHM, fmtMem, fmtReset, fmtTime, fmtValue, gotoProcesses, gpuMem, gpusOf, h, en, haptic, hasProcessesPage, hist, hour12, icon, keyButton, levelOf, media, metricText, online, openSheet, paceInfo, pad, prRow, pushView, quotaProviders, r1, registerProcessesSorter, renderStatus, ringSvg, setArtColor, configMark, configReadSince, localWriteStored, setMediaState, setVolDragging, shortDur, shortGpu, store, t, tick, toast, volDragging, wxBlock, wxDeg, wxIcon } from '../main.js';
 import { W } from '../registry.js';
 import { invalidateDeckState } from './controls.js';
+
+/** The chance of rain under a forecast cell, from 20 % up, with a drop glyph. */
+function rainEl(rain) { const e = h('span', 'fc-r'); if (rain >= 20) e.innerHTML = `<svg class="drop" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3s6 6.6 6 11a6 6 0 0 1-12 0c0-4.4 6-11 6-11z" fill="currentColor"/></svg>${rain}%`; return e; }
+/** A forecast cell's weather glyph (SVG markup from wxIcon). */
+function wxEl(svg) { const e = h('span', 'fc-ic'); e.innerHTML = svg; return e; }
 
 function bindProcessLink(box, sortTarget) {
   if (!hasProcessesPage()) return;
@@ -75,9 +80,9 @@ W.forecast = {
           for (let i = 0; i < Math.min(n, d.time.length); i++) {
             const day = i === 0 ? t('time.today') : new Date(d.time[i] + 'T12:00').toLocaleDateString(LOCALE, { weekday: 'short' });
             const rain = d.precipitation_probability_max?.[i];
-            cells.push(h('div', 'fc-i', h('span', 'fc-t', day), h('span', 'fc-ic', wxIcon(d.weather_code[i])),
+            cells.push(h('div', 'fc-i', h('span', 'fc-t', day), wxEl(wxIcon(d.weather_code[i])),
               h('span', 'fc-v', wxDeg(d.temperature_2m_max[i]) + '°', h('small', null, ' ' + wxDeg(d.temperature_2m_min[i]) + '°')),
-              h('span', 'fc-r', rain >= 20 ? `💧${rain}%` : '')));
+              rainEl(rain)));
           }
         } else {
           const hr = w.hourly;
@@ -88,8 +93,8 @@ W.forecast = {
             const i = start + k * step;
             if (i >= hr.time.length) break;
             const rain = hr.precipitation_probability?.[i];
-            cells.push(h('div', 'fc-i', h('span', 'fc-t', k === 0 ? 'Now' : hr.time[i].slice(11, 13)), h('span', 'fc-ic', wxIcon(hr.weather_code[i], hr.is_day?.[i])),
-              h('span', 'fc-v', wxDeg(hr.temperature_2m[i]) + '°'), h('span', 'fc-r', rain >= 20 ? `💧${rain}%` : '')));
+            cells.push(h('div', 'fc-i', h('span', 'fc-t', k === 0 ? 'Now' : hr.time[i].slice(11, 13)), wxEl(wxIcon(hr.weather_code[i], hr.is_day?.[i])),
+              h('span', 'fc-v', wxDeg(hr.temperature_2m[i]) + '°'), rainEl(rain)));
           }
         }
         row.replaceChildren(...cells);
@@ -97,6 +102,81 @@ W.forecast = {
     };
   },
 };
+
+/**
+ * The conversation part of a session's sheet: the last prompt sent from the phone and the reply streaming back
+ * ("session-run" events), and a box to send the next one. The agent runs it headlessly in the session's folder;
+ * tool permissions still arrive as the usual permission prompt.
+ */
+function sessionChat(s, panel) {
+  const thread = h('div', 'chat-thread');
+  const input = document.createElement('textarea');
+  input.className = 'chat-input';
+  input.rows = 1;
+  input.maxLength = 8000;
+  input.placeholder = t('sess.promptPlaceholder');
+  const send = h('button', 'chat-send', icon('send'));
+  send.type = 'button';
+  send.setAttribute('aria-label', t('sess.send'));
+  const hint = h('div', 'chat-hint');
+  let run = sessionRuns.get(s.id) || null, sending = false;
+  const busy = () => run?.status === 'running';
+  const draw = () => {
+    const items = run?.items || [];
+    thread.replaceChildren(...items.map((it) => {
+      if (it.role === 'tool') return h('div', 'chat-tool', icon('tool'), h('span', null, it.text));
+      return h('div', 'chat-msg ' + (it.role === 'user' ? 'me' : it.role === 'error' ? 'err' : 'ai'), it.text);
+    }), ...(busy() ? [h('div', 'chat-typing', h('i'), h('i'), h('i'))] : []));
+    thread.scrollTop = thread.scrollHeight;
+    send.replaceChildren(icon(busy() ? 'stop' : 'send'));
+    send.classList.toggle('stop', busy());
+    send.setAttribute('aria-label', t(busy() ? 'sess.stop' : 'sess.send'));
+    panel.classList.toggle('chatting', items.length > 0);
+  };
+  const say = (msg) => { hint.textContent = msg || ''; };
+  const onRun = (r) => { if (r.sessionId === s.id) { run = r; draw(); } };
+  runListeners.add(onRun);
+  // the keyboard covers the bottom of the screen: lift the sheet by the part of the window it hides
+  const vv = window.visualViewport;
+  const lift = () => { panel.style.marginBottom = vv ? Math.max(0, window.innerHeight - vv.height - vv.offsetTop) + 'px' : ''; };
+  vv?.addEventListener('resize', lift);
+  panel._cleanup = () => { runListeners.delete(onRun); vv?.removeEventListener('resize', lift); };
+  const grow = () => { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 110) + 'px'; };
+  input.addEventListener('input', grow);
+  const submit = async () => {
+    if (busy()) {
+      haptic();
+      try { await api('/sessions/prompt/cancel?runId=' + encodeURIComponent(run.runId), 'POST'); } catch (_) {}
+      return;
+    }
+    const text = input.value.trim();
+    if (!text || sending) return;
+    // the agent caps a request line at 16 KB; non-Latin text grows ~9x once URL-encoded
+    if (encodeURIComponent(text).length > 15000) { say('Too long to send from the phone: shorten it a little'); return; }
+    sending = true; send.disabled = true; say('');
+    haptic();
+    // shown at once; the agent's first snapshot replaces it
+    run = { runId: null, sessionId: s.id, status: 'running', items: [...(run?.items || []), { role: 'user', text }] };
+    draw();
+    try {
+      // in the query string: the phone app's proxy forwards no request body (like the Note widget's text)
+      const r = await fetch(`${API}/sessions/prompt?id=${encodeURIComponent(s.id)}&text=${encodeURIComponent(text)}`, { method: 'POST', headers: PANEL_HEADERS });
+      if (r.ok) { input.value = ''; grow(); if (!run.runId) run.runId = (await r.json().catch(() => ({}))).runId || null; }
+      else {
+        run = { ...run, status: 'error', items: run.items.slice(0, -1) };
+        say(r.status === 403 ? t('sess.promptsOff') : r.status === 409 ? t('sess.busyNow') : ((await r.json().catch(() => ({}))).error || t('panel.pcUnreachable')));
+        draw();
+      }
+    } catch (_) { run = { ...run, status: 'error', items: run.items.slice(0, -1) }; say(t('panel.pcUnreachable')); draw(); }
+    finally { sending = false; send.disabled = false; }
+  };
+  send.addEventListener('click', submit);
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); } });
+  draw();
+  // fetch the last run in case it happened while the sheet was closed
+  api('/sessions/run?id=' + encodeURIComponent(s.id)).then((r) => { if (r && r.sessionId === s.id) { run = r; sessionRuns.set(s.id, r); draw(); } }).catch(() => {});
+  return [thread, hint, h('div', 'chat-compose', input, send)];
+}
 
 W.media = {
   needs: ['state', 'fast'],
@@ -108,33 +188,91 @@ W.media = {
     const sourceIcons = {
       YouTube: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="1" y="4" width="22" height="16" rx="5" fill="#ff0033"/><path d="m10 8 6 4-6 4z" fill="#fff"/></svg>',
       'YouTube Music': '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="11" fill="#ff0033"/><circle cx="12" cy="12" r="6.5" fill="none" stroke="#fff" stroke-width="1.4"/><path d="m10 8.5 5.5 3.5-5.5 3.5z" fill="#fff"/></svg>',
+      Spotify: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="11" fill="#1ed760"/><path d="M6.5 9.2c3.8-1.1 8-.8 11.2 1M7.2 12.4c3.1-.9 6.5-.6 9.2.9M7.8 15.4c2.5-.6 5-.4 7.1.7" fill="none" stroke="#000" stroke-width="1.6" stroke-linecap="round"/></svg>',
+      Netflix: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="5" fill="#141414"/><path d="M8.5 5.5h2.6l2.4 7V5.5h2.5v13h-2.5l-2.5-7.2v7.4H8.5z" fill="#e50914"/></svg>',
       'Internet Radio': '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.2 6.8 18.5 2a1 1 0 0 1 .7 1.9L10.8 7H20a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h2.2zm1.8 5.2a3 3 0 1 0 0 6 3 3 0 0 0 0-6zm6 1.5v1.8h4v-1.8h-4zm0 3.2v1.8h4v-1.8h-4z" fill="#38bdf8"/></svg>',
     };
     let artId = -1, volTimer = 0, volumeRelease = 0;
-    img.addEventListener('load', () => { img.classList.add('on'); setArtColor(averageColor(img)); });
+    // Several players at once (state.mediaSessions, e.g. two YouTube tabs and Spotify): the card shows one, a dot
+    // per player, and switches on a swipe or a dot tap. Controls then go to the player on screen (?session=id).
+    let sel = null, view = null, swiped = false;
+    const dots = h('div', 'm-dots');
+    box.append(dots);
+    const sessions = () => { const l = D.state?.mediaSessions; return Array.isArray(l) && l.length > 1 ? l : null; };
+    const shown = () => (sessions() && view) || media;
+    const sq = () => (sessions() && view ? 'session=' + encodeURIComponent(view.id) : '');
+    const pick = (i, dir) => {
+      const l = sessions();
+      if (!l || !l[i] || l[i].id === sel) return;
+      sel = l[i].id;
+      haptic();
+      box.classList.remove('m-slide-l', 'm-slide-r');
+      void box.offsetWidth;
+      box.classList.add(dir > 0 ? 'm-slide-l' : 'm-slide-r');
+      self.update('state');
+    };
+    let sx = 0, sy = 0, sid = null;
+    box.addEventListener('pointerdown', (e) => {
+      if (!sessions() || e.target.closest('input, .m-dots')) return;
+      sid = e.pointerId; sx = e.clientX; sy = e.clientY;
+    });
+    box.addEventListener('pointercancel', () => (sid = null));
+    box.addEventListener('pointerup', (e) => {
+      if (e.pointerId !== sid) return;
+      sid = null;
+      const dx = e.clientX - sx, dy = e.clientY - sy, l = sessions();
+      if (!l || Math.abs(dx) < 40 || Math.abs(dx) < Math.abs(dy) * 1.3) return;
+      swiped = true; // the click that follows this pointerup must not press a button
+      setTimeout(() => (swiped = false), 60);
+      const i = Math.max(0, l.findIndex((x) => x.id === sel));
+      pick(Math.max(0, Math.min(l.length - 1, i + (dx < 0 ? 1 : -1))), dx < 0 ? 1 : -1);
+    });
+    const renderDots = (l) => {
+      if (!l) { dots.replaceChildren(); return; }
+      if (dots.childElementCount !== l.length) {
+        dots.replaceChildren(...l.map((_, i) => {
+          const d = h('button', null);
+          d.type = 'button';
+          d.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const cur = sessions(), at = cur ? cur.findIndex((x) => x.id === sel) : 0;
+            pick(i, i > at ? 1 : -1);
+          });
+          return d;
+        }));
+      }
+      [...dots.children].forEach((d, i) => {
+        d.classList.toggle('on', l[i].id === sel);
+        d.classList.toggle('live', !!l[i].playing);
+        d.setAttribute('aria-label', `${l[i].app}: ${l[i].title}`);
+      });
+    };
+    img.addEventListener('load', () => { img.classList.add('on'); setArtColor(averageColor(img)); box.style.setProperty('--art', `url("${img.src}")`); });
     img.addEventListener('error', () => img.classList.remove('on'));
     box.querySelectorAll('[data-media]').forEach((btn) => btn.addEventListener('click', async () => {
+      if (swiped) return;
       haptic();
-      const action = btn.dataset.media;
-      if (action === 'playpause' && media) {
-        media.playing = !media.playing; // optimistic update
-        media.at = performance.now();
-        box.classList.toggle('playing', media.playing);
+      const action = btn.dataset.media, cur = shown(), qs = sq();
+      if (action === 'playpause' && cur) {
+        cur.playing = !cur.playing; // optimistic update
+        cur.at = performance.now();
+        box.classList.toggle('playing', cur.playing);
       }
       try {
-        const res = await api('/media/' + action, 'POST');
-        if (res && typeof res === 'object' && 'media' in res) setMediaState(res.media);
+        const res = await api('/media/' + action + (qs ? '?' + qs : ''), 'POST');
+        if (!qs && res && typeof res === 'object' && 'media' in res) setMediaState(res.media);
         invalidateDeckState();
         emit('tick');
       } catch (_) {}
     }));
     q('.bar').addEventListener('click', async (e) => {
-      if (!media || !media.durMs || !media.canSeek) return;
+      const cur = shown(), qs = sq();
+      if (swiped || !cur || !cur.durMs || !cur.canSeek) return;
       const r = e.currentTarget.getBoundingClientRect();
-      const ms = Math.round(((e.clientX - r.left) / r.width) * media.durMs);
+      const ms = Math.round(((e.clientX - r.left) / r.width) * cur.durMs);
       haptic();
-      media.posMs = ms; media.at = performance.now();
-      try { await api('/media/seek?ms=' + ms, 'POST'); } catch (_) {}
+      cur.posMs = ms; cur.at = performance.now();
+      try { await api('/media/seek?ms=' + ms + (qs ? '&' + qs : ''), 'POST'); } catch (_) {}
     });
     const paintVol = (v) => { vol.style.setProperty('--p', v + '%'); q('.vol-val').textContent = v; };
     const cancelVolumeDrag = () => {
@@ -160,22 +298,31 @@ W.media = {
       try { const a = await api('/volume?op=mute', 'POST'); D.state.audio = a; emit('state'); } catch (_) {}
     });
 
-    return {
+    const self = {
       update(kind) {
         if (kind === 'fast') {
-          if (!media) return;
-          if (media.durMs > 0) {
-            const pos = Math.min(media.durMs, media.posMs + (media.playing ? performance.now() - media.at : 0));
-            q('.fill').style.width = (pos / media.durMs) * 100 + '%';
+          const mv = shown();
+          if (!mv) return;
+          if (mv.durMs > 0) {
+            const pos = Math.min(mv.durMs, mv.posMs + (mv.playing ? performance.now() - mv.at : 0));
+            q('.fill').style.width = (pos / mv.durMs) * 100 + '%';
             q('.m-pos').textContent = fmtTime(pos);
-          } else if (media.app === 'Internet Radio') {
-            const pos = Math.max(0, (media.posMs || 0) + (media.playing ? performance.now() - media.at : 0));
-            q('.fill').style.width = media.playing ? '100%' : '0';
+          } else if (mv.app === 'Internet Radio') {
+            const pos = Math.max(0, (mv.posMs || 0) + (mv.playing ? performance.now() - mv.at : 0));
+            q('.fill').style.width = mv.playing ? '100%' : '0';
             q('.m-pos').textContent = fmtTime(pos);
           }
           return;
         }
-        const m = D.state?.media, a = D.state?.audio;
+        const l = sessions();
+        if (l) {
+          const s = l.find((x) => x.id === sel) || l[0];
+          sel = s.id;
+          view = { ...s, at: performance.now() };
+        } else { sel = null; view = null; }
+        renderDots(l);
+        box.style.touchAction = l ? 'pan-y' : ''; // a sideways swipe here switches players, not pages
+        const m = l ? view : D.state?.media, a = D.state?.audio;
         vol.disabled = (!a || a.canControl === false);
         box.classList.toggle('volume-unavailable', (!a || a.canControl === false));
         q('.mute').disabled = (!a || a.canControl === false);
@@ -192,7 +339,7 @@ W.media = {
           q('.m-artist').textContent = t('w.pressToResume');
           q('.fill').style.width = '0';
           q('.m-pos').textContent = q('.m-dur').textContent = '0:00';
-          if (artId !== 0) { artId = 0; img.classList.remove('on'); setArtColor(null); }
+          if (artId !== 0) { artId = 0; img.classList.remove('on'); setArtColor(null); box.style.removeProperty('--art'); }
           return;
         }
         box.classList.toggle('playing', m.playing);
@@ -207,14 +354,16 @@ W.media = {
         } else {
           q('.m-dur').textContent = fmtTime(m.durMs);
         }
-        if (m.artId !== artId) {
-          artId = m.artId;
-          if (m.artId) img.src = `${API}/art?id=${m.artId}`;
-          else { img.classList.remove('on'); setArtColor(null); }
+        const artKey = l ? (m.artId ? m.id + ':' + m.artId : 0) : m.artId;
+        if (artKey !== artId) {
+          artId = artKey;
+          if (m.artId) img.src = l ? `${API}/media/art?session=${encodeURIComponent(m.id)}&v=${m.artId}` : `${API}/art?id=${m.artId}`;
+          else { img.classList.remove('on'); setArtColor(null); box.style.removeProperty('--art'); }
         }
       },
       destroy: cancelVolumeDrag,
     };
+    return self;
   },
 };
 
@@ -225,9 +374,13 @@ W.stat = {
     const c = color(m.color);
     box.style.setProperty('--c', c);
     const canvas = h('canvas');
-    const lbl = h('div', 't-label', m.label);
+    // an icon badge for the metric, its name, and a small ring for metrics that have a share (CPU %, RAM used …)
+    const glyph = { cpu: 'cpu', cputemp: 'thermo', gpu: 'gpu', gputemp: 'thermo', hotspot: 'thermo', gpupower: 'zap', gpuclock: 'gpu',
+      ram: 'memory', vram: 'memory', net: 'updown', down: 'updown', up: 'updown', ping: 'pulse' }[o.metric] || 'pulse';
+    const name = h('span', 't-name', m.label), ring = h('span', 't-ring');
+    const lbl = h('div', 't-label', h('span', 'ts-ic', icon(glyph)), name);
     const val = h('b', null, '—'), unit = h('small'), sub = h('div', 't-sub', ' ');
-    box.append(canvas, lbl, h('div', 't-val', val, unit), sub);
+    box.append(canvas, lbl, ring, h('div', 't-val', val, unit), sub);
     if (o.metric === 'cpu' || o.metric === 'ram') bindProcessLink(box, o.metric === 'cpu' ? 'cpu' : 'mem');
     return {
       update() {
@@ -237,7 +390,10 @@ W.stat = {
         val.textContent = v;
         unit.textContent = u;
         const pctVal = m.pct?.(s);
-        lbl.textContent = pctVal != null && m.label === 'RAM' ? `RAM (${Math.round(pctVal)}%)` : m.label;
+        name.textContent = pctVal != null && m.label === 'RAM' ? `RAM (${Math.round(pctVal)}%)` : m.label;
+        const share = pctVal ?? (m.unit === '%' ? m.val(s) : null);
+        ring.hidden = share == null;
+        if (share != null) ring.style.setProperty('--p', Math.max(0, Math.min(100, share)));
         sub.textContent = m.sub?.(s) || ' ';
         chart(canvas, [{ data: hist[m.hist || o.metric] || hist.cpu, color: c, max: m.max(s) }]);
       },
@@ -592,7 +748,7 @@ W.sessions = {
       const close = h('button', 'session-close', icon('x'));
       close.setAttribute('aria-label', 'Close session details');
       const onKey = (e) => { if (e.key === 'Escape') dismiss(); };
-      const dismiss = () => { backdrop.remove(); document.removeEventListener('keydown', onKey); };
+      const dismiss = () => { backdrop.remove(); document.removeEventListener('keydown', onKey); panel._cleanup?.(); };
       close.addEventListener('click', dismiss);
       backdrop.addEventListener('click', (e) => { if (e.target === backdrop) dismiss(); });
       panel.append(h('div', 'session-panel-head', h('span', null, s.tool === 'codex' ? '◎ Codex' : '✳ Claude Code'), close), title);
@@ -609,8 +765,15 @@ W.sessions = {
         ['Last input / context window', s.lastInputTokens != null && s.contextWindow ? `${tokens(s.lastInputTokens)} / ${tokens(s.contextWindow)}` : null],
         ['Recent tool', s.lastTool],
       ];
-      for (const [label, value] of rows) if (value != null) panel.append(h('div', 'session-detail-row', h('span', null, label), h('strong', null, value)));
-      if (s.tool === 'codex') panel.append(h('p', 'session-note', 'Token totals are for this local session, not your account allowance.'));
+      // the facts fold away under a summary line, so the conversation gets the room
+      const facts = h('details', 'session-facts', h('summary', null, [statusText(s), s.model].filter(Boolean).join(' · ') || 'Details'));
+      for (const [label, value] of rows) if (value != null) facts.append(h('div', 'session-detail-row', h('span', null, label), h('strong', null, value)));
+      if (s.tool === 'codex') facts.append(h('p', 'session-note', 'Token totals are for this local session, not your account allowance.'));
+      panel.append(facts);
+      panel.classList.add('has-chat');
+      panel.append(...sessionChat(s, panel));
+      panel.prepend(h('div', 'sheet-grab'));
+      sheetDrag(panel, dismiss);
       backdrop.append(panel);
       document.body.append(backdrop);
       close.focus();
@@ -630,7 +793,7 @@ W.sessions = {
         const sorted = [...sessions].sort((a, b) => (S_ORDER[a.status] ?? 9) - (S_ORDER[b.status] ?? 9) || b.since - a.since);
         const rows = sorted.length ? sorted.map((s) => {
           const row = h('button', 'sess ' + s.status,
-            h('span', 'st'), h('span', 'tl ' + s.tool, s.tool === 'claude' ? '✳' : '◎'),
+            h('span', 'st'), h('span', 'tl ' + s.tool, s.tool === 'claude' ? '✳' : '◎', h('i', 'tl-st')),
             h('span', 'sess-main', h('span', 'nm', s.project || s.name), h('span', 'sess-meta', [s.model, s.effort].filter(Boolean).join(' · ') || statusText(s))),
             h('span', 'ds', shortDur(Date.now() - s.since)));
           row.type = 'button';
@@ -658,7 +821,7 @@ W.github = {
         if (!g) return;
         const rows = Math.max(1, Math.floor((box.clientHeight - 90) / 25));
         user.textContent = g.user ? '@' + g.user : '';
-        bell.textContent = `🔔 ${g.notifications >= 50 ? '50+' : g.notifications}`;
+        bell.replaceChildren(icon('bell'), ` ${g.notifications >= 50 ? '50+' : g.notifications}`);
         rc.textContent = g.reviewRequests.length;
         mc.textContent = g.myPrs.length;
         const nRev = Math.min(g.reviewRequests.length || 1, Math.max(1, Math.floor(rows / 2)));
@@ -688,6 +851,7 @@ W.processes = {
       e.innerHTML = '<div class="p-ico"></div><div class="p-info"><div class="p-title"><span class="p-t"></span><span class="p-count"></span><span class="p-lock"></span></div>' +
         '<div class="p-bar"><i></i></div></div><div class="p-nums"><b></b><small></small></div>';
       fillIcon(e.querySelector('.p-ico'), g);
+      e.style.setProperty('--hue', monogramColor(g.name)); // the row's load fill takes the app's colour
       e.addEventListener('click', () => { haptic(); openSheet(e._g, canKill); });
       els.set(g.name, e);
       return e;
@@ -697,7 +861,8 @@ W.processes = {
       if (!data) return;
       if (!data.groups.length) { sum.textContent = ''; grid.replaceChildren(h('div', 'empty', t('w.measuring'))); return; }
       const cols = box.clientWidth > 460 ? 2 : 1;
-      const rows = Math.max(1, Math.floor((box.clientHeight - 46) / 40));
+      const rowH = document.body.dataset.theme === 'material' ? 54 : 40; // Material rows are taller tiles
+      const rows = Math.max(1, Math.floor((box.clientHeight - 46) / rowH));
       grid.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
       grid.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
       const list = [...data.groups].sort((a, b) => (sort === 'cpu' ? b.cpu - a.cpu || b.memMb - a.memMb : b.memMb - a.memMb)).slice(0, cols * rows);
@@ -720,8 +885,10 @@ W.processes = {
         e._g = g;
         e.querySelector('.p-t').textContent = g.title;
         e.querySelector('.p-count').textContent = g.count > 1 ? '×' + g.count : '';
-        e.querySelector('.p-lock').textContent = g.locked ? '🔒' : '';
-        e.querySelector('.p-bar i').style.width = ((sort === 'cpu' ? g.cpu : g.memMb) / max) * 100 + '%';
+        e.querySelector('.p-lock').replaceChildren(...(g.locked ? [icon('lock')] : []));
+        const share = ((sort === 'cpu' ? g.cpu : g.memMb) / max) * 100;
+        e.querySelector('.p-bar i').style.width = share + '%';
+        e.style.setProperty('--w', share.toFixed(1) + '%'); // Material fills the whole row up to this
         e.querySelector('.p-nums b').textContent = sort === 'cpu' ? g.cpu.toFixed(1) + '%' : fmtMem(g.memMb);
         e.querySelector('.p-nums small').textContent = sort === 'cpu' ? fmtMem(g.memMb) : g.cpu.toFixed(1) + '%';
         grid.appendChild(e); // keeps the order

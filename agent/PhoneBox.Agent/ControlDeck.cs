@@ -112,6 +112,10 @@ public sealed partial class ControlDeck : BackgroundService
         };
     }
 
+    /// <summary>Monitors from the last hardware scan (refreshed in the background at most every 30 s).</summary>
+    internal IReadOnlyList<DeckMonitor> Monitors() { RefreshHardware(); return _monitors; }
+    internal bool MonitorBrightness(string id, int value) => _native.Brightness(id, value);
+
     private void RefreshHardware()
     {
         lock (_state)
