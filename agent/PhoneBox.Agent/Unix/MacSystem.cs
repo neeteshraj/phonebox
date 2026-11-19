@@ -67,7 +67,7 @@ internal static partial class MacSystem
             var main = CGMainDisplayID();
             var pointer = Pointer();
             var info = ProfilerInfo(list);
-            return list.Select((d, i) =>
+            var result = list.Select((d, i) =>
             {
                 var b = CGDisplayBounds(d.Id);
                 int w = (int)CGDisplayPixelsWide(d.Id), h = (int)CGDisplayPixelsHigh(d.Id), hz = 0;
@@ -86,8 +86,11 @@ internal static partial class MacSystem
                 if (hz == 0) hz = p.Hz; // ProMotion panels report 0 from CoreGraphics
                 var focused = pointer is { } pt && pt.X >= b.X && pt.X < b.X + b.W && pt.Y >= b.Y && pt.Y < b.Y + b.H;
                 var name = d.Builtin ? "Built-in Display" : p.Name ?? $"Display {i + 1}";
-                return new SystemDisplay(d.Id.ToString(CultureInfo.InvariantCulture), name, d.Builtin, d.Id == main, focused, w, h, hz, Brightness(d.Id));
+                return (Cg: d.Id, Display: new SystemDisplay(d.Id.ToString(CultureInfo.InvariantCulture), name, d.Builtin, d.Id == main, focused, w, h, hz, Brightness(d.Id)));
             }).ToList();
+            // externals without DisplayServices brightness: DDC/CI through m1ddc, when the monitor really answers
+            var ddc = DdcLevels(result.Where(r => !r.Display.Builtin && r.Display.Brightness is null).Select(r => (r.Cg, r.Display.Name)).ToList());
+            return result.Select(r => ddc.TryGetValue(r.Cg, out var l) ? r.Display with { Brightness = l.Percent } : r.Display).ToList();
         }
         catch { return []; }
     }
@@ -126,7 +129,7 @@ internal static partial class MacSystem
 
     public static bool SetBrightness(uint display, int percent)
     {
-        if (Brightness(display) is null) return false; // unsupported display
+        if (Brightness(display) is null) return DdcSet(display, percent); // DDC-capable external, else unsupported
         try { return DisplayServicesSetBrightness(display, Math.Clamp(percent, 0, 100) / 100f) == 0; }
         catch { return false; }
     }

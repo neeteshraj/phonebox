@@ -16,8 +16,11 @@ internal sealed class PortableDeckNative(
     private (long At, (string Kind, string Path)? Player)? _filePlayerCache;
     private (long At, (string Kind, string Path)? Player)? _streamPlayerCache;
 
+    /// <summary>The "default" master device, plus (macOS) each output by CoreAudio UID so the deck can switch outputs;
+    /// those carry no level of their own (CanControl false).</summary>
     public DeckAudio Audio() => audio.Snapshot() is { } a ? new(true, null,
-        [new("default", "System output", "output", true, a.Volume, a.Muted, 0, 1, a.CanControl)], [])
+        [new("default", "System output", "output", true, a.Volume, a.Muted, 0, 1, a.CanControl),
+         .. MacAudioProbe.Outputs().Select(o => new DeckDevice(o.Id, o.Name, "output", o.Current, 0, false, 0, 0, CanControl: false))], [])
         : new(false, "Audio backend is unavailable", [], []);
     public bool Device(string id, int? volume, bool? muted, int? channel = null)
     {
@@ -26,7 +29,7 @@ internal sealed class PortableDeckNative(
         return muted is not { } m || m == current.Muted || audio.ToggleMute();
     }
     public bool Session(string id, int? volume, bool? muted) => false;
-    public bool DefaultDevice(string id, int? role = null) => false;
+    public bool DefaultDevice(string id, int? role = null) => id != "default" && MacAudioProbe.SetDefaultOutput(id);
     public IReadOnlyList<DeckMonitor> Monitors() => OperatingSystem.IsMacOS()
         ? MacSystem.Displays().Select(d => new DeckMonitor(d.Id, d.Name, d.Brightness, d.Width, d.Height, d.Hz)).ToList() : [];
     public bool Brightness(string id, int value) => OperatingSystem.IsMacOS() && uint.TryParse(id, out var display) && MacSystem.SetBrightness(display, value);
