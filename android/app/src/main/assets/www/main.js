@@ -189,6 +189,11 @@ const ICONS = {
   zap: 'M13 2 3 14h9l-1 8 10-12h-9l1-8z',
   send: 'M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z',
   search: 'M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.35-4.35',
+  coffee: 'M17 8h1a4 4 0 1 1 0 8h-1M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4zM6 2v2M10 2v2M14 2v2',
+  moon: 'M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z',
+  focus: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8z',
+  clipboard: 'M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2M9 2h6v4H9z',
+  download: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3',
   volume: 'M11 5 6 9H2v6h4l5 4V5zM15.54 8.46a5 5 0 0 1 0 7.07M19.07 4.93a10 10 0 0 1 0 14.14',
   volumeX: 'M11 5 6 9H2v6h4l5 4V5zM22 9l-6 6M16 9l6 6',
   sun: 'M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10zM12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42',
@@ -1003,6 +1008,29 @@ export async function loadApprovals() {
   renderApproval();
 }
 
+/** Line diff of an edit (LCS on lines; large blocks fall back to removed-then-added) as a <div> of coloured rows. */
+export function diffView(diff) {
+  const box = h('div', 'diff');
+  if (diff.path) box.append(h('div', 'diff-path', diff.path));
+  for (const hk of diff.hunks) {
+    const a = (hk.old || '').split('\n'), b = (hk.new || '').split('\n');
+    if (!hk.old) b.length && box.append(...b.map((l) => h('div', 'diff-l add', l || ' ')));
+    else if (a.length * b.length > 40_000) box.append(...a.map((l) => h('div', 'diff-l del', l || ' ')), ...b.map((l) => h('div', 'diff-l add', l || ' ')));
+    else {
+      const m = a.length, n = b.length, L = Array.from({ length: m + 1 }, () => new Uint16Array(n + 1));
+      for (let i = m - 1; i >= 0; i--) for (let j = n - 1; j >= 0; j--) L[i][j] = a[i] === b[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+      let i = 0, j = 0;
+      while (i < m || j < n) {
+        if (i < m && j < n && a[i] === b[j]) { box.append(h('div', 'diff-l', a[i] || ' ')); i++; j++; }
+        else if (i < m && (j >= n || L[i + 1][j] >= L[i][j + 1])) box.append(h('div', 'diff-l del', a[i++] || ' ')); // removed lines first
+        else box.append(h('div', 'diff-l add', b[j++] || ' '));
+      }
+    }
+    if (diff.hunks.length > 1) box.append(h('div', 'diff-gap', '⋯'));
+  }
+  return box;
+}
+
 export function renderApproval() {
   const a = approvals[0];
   const box = $('approval');
@@ -1014,7 +1042,7 @@ export function renderApproval() {
     if (nightOn) { wakeUntil = Date.now() + 60_000; setNight(false); }
     buzz('0,120,80,120,80,240');
     // A prompt whose answer is still in flight comes back locked: it can be shown again while its own post runs.
-    $('apAllow').disabled = $('apDeny').disabled = $('apSkip').disabled = submitting.has(a.id);
+    $('apAllow').disabled = $('apDeny').disabled = $('apSkip').disabled = $('apSession').disabled = submitting.has(a.id);
   }
   // A question from Claude is answered at the PC (the terminal shows it); the phone only tells you it is waiting.
   const asking = a.kind === 'question';
@@ -1025,8 +1053,12 @@ export function renderApproval() {
   $('apCount').textContent = approvals.length > 1 ? t('panel.oneOfN', { n: approvals.length }) : '';
   $('apTool').textContent = a.tool;
   $('apDesc').textContent = a.description || '';
-  $('apDetail').textContent = a.detail || '';
-  $('apDetail').hidden = !a.detail;
+  // a file edit shows as a diff (red removed, green added lines); anything else as its plain detail text
+  if (a.diff?.hunks?.length) $('apDetail').replaceChildren(diffView(a.diff));
+  else $('apDetail').textContent = a.detail || '';
+  $('apDetail').classList.toggle('is-diff', !!a.diff?.hunks?.length);
+  $('apDetail').hidden = !a.detail && !a.diff?.hunks?.length;
+  $('apSession').hidden = asking || !a.canAllowSession;
   box.hidden = false;
   tickApproval();
 }
@@ -1056,12 +1088,13 @@ export async function decide(decision) {
   if (!a || submitting.has(a.id)) return;
   haptic();
   submitting.add(a.id);
-  $('apAllow').disabled = $('apDeny').disabled = $('apSkip').disabled = true;
+  $('apAllow').disabled = $('apDeny').disabled = $('apSkip').disabled = $('apSession').disabled = true;
   let accepted = false;
   try {
     await api(`/approvals/${encodeURIComponent(a.id)}?decision=${decision}`, 'POST', 4000);
     accepted = true;
     if (decision === 'skip') toast(t(a.kind === 'question' ? 'panel.questionWaiting' : 'panel.answerInTerminal'), 'warn');
+    else if (decision === 'allow-session') toast(t('panel.allowedSession', { tool: a.tool }), 'ok');
     else toast(t(decision === 'allow' ? 'panel.allowedTool' : 'panel.deniedTool', { tool: a.tool }), decision === 'allow' ? 'ok' : 'err');
   } catch (_) { toast(t('panel.alreadyAnswered'), 'warn'); }
   finally { submitting.delete(a.id); }
@@ -1072,7 +1105,7 @@ export async function decide(decision) {
     // moved on to another approval while this one was in flight, and unlocking that one would let a second
     // answer go out for a prompt whose own post is still running.
     if (approvals[0] && approvals[0].id === a.id) {
-      $('apAllow').disabled = $('apDeny').disabled = $('apSkip').disabled = false;
+      $('apAllow').disabled = $('apDeny').disabled = $('apSkip').disabled = $('apSession').disabled = false;
     }
     return;
   }
@@ -1084,6 +1117,7 @@ export async function decide(decision) {
 sheetDrag(document.querySelector('.ap-card'), () => decide('skip'), { scroller: '.ap-detail' });
 sheetDrag($('pSheet'), () => closeSheet(), { scroller: '.ps-list' });
 $('apAllow').addEventListener('click', () => decide('allow'));
+$('apSession').addEventListener('click', () => decide('allow-session'));
 $('apDeny').addEventListener('click', () => decide('deny'));
 $('apSkip').addEventListener('click', () => decide('skip'));
 

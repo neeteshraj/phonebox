@@ -507,3 +507,13 @@ body[data-theme="material"] .cc2-count { padding: 2px 10px; border-radius: 999px
 @container (max-width: 230px) { body[data-theme="material"] .t-ring { display: none; } }
 body[data-theme="material"] .cc2-sl { --cc2-on: var(--m-on-primary); --cc2-off: var(--m-on-surface); }
 body[data-theme="material"] .cc2-sl .cc2-name, body[data-theme="material"] .cc2-sl .cc2-val { color: transparent; }
+body[data-theme="material"] .ap-btn.session { background: color-mix(in oklab, var(--m-primary) 22%, var(--m-s2)); color: var(--m-primary); }
+body[data-theme="material"] .chat-mic { background: var(--m-s3); color: var(--m-on-surface); border-radius: 16px; }
+body[data-theme="material"] .chat-mic.on { background: #ffb4ab; color: #690005; }
+body[data-theme="material"] .proj-chip { background: var(--m-s3); } body[data-theme="material"] .proj-chip.on { background: var(--m-pc); color: var(--m-on-pc); }
+/* Mac controls, usage */
+body[data-theme="material"] .mc-pw, body[data-theme="material"] .mc-out, body[data-theme="material"] .mc-clip { background: var(--m-s3); }
+body[data-theme="material"] .mc-pw.on, body[data-theme="material"] .mc-out.on { background: var(--m-pc); color: var(--m-on-pc); }
+body[data-theme="material"] .mc-app.on { background: color-mix(in oklab, var(--m-primary) 16%, transparent); }
+body[data-theme="material"] .mc-iconbtn { background: var(--m-sc); color: var(--m-on-sc); }
+body[data-theme="material"] .us-hero b { font-weight: 400; }

@@ -1168,3 +1168,104 @@ W.controlcenter = {
     return { update() { draw(); load(); } };
   },
 };
+
+// ---------------------------------------------------------------- Mac controls
+// Running apps (tap: bring to front; hold: move its window to the other display), keep awake / sleep display / lock /
+// Focus, the sound output, and a clipboard bridge. Reads /api/system/apps, /api/system/audio, /api/system/controls.
+W.mac = {
+  needs: ['state'],
+  create(box, { o }) {
+    box.classList.add('mc');
+    const apps = h('div', 'mc-apps');
+    const power = h('div', 'mc-power');
+    const outs = h('div', 'mc-outs');
+    const clip = document.createElement('input');
+    clip.type = 'text'; clip.placeholder = 'Send text to the Mac clipboard'; clip.maxLength = 100000;
+    const clipSend = h('button', 'mc-iconbtn', icon('send')); clipSend.type = 'button'; clipSend.setAttribute('aria-label', 'Send to clipboard');
+    const clipGet = h('button', 'mc-iconbtn', icon('download')); clipGet.type = 'button'; clipGet.setAttribute('aria-label', 'Get the Mac clipboard');
+    box.append(h('div', 'mc-head', h('span', 's-label', o.title || 'Mac'), h('span', 'mc-sub')),
+      h('div', 'mc-body', apps, h('div', 'mc-side',
+        h('div', 'mc-sec', 'Power'), power,
+        h('div', 'mc-sec', 'Sound output'), outs,
+        h('div', 'mc-sec', 'Clipboard'), h('div', 'mc-clip', icon('clipboard'), clip, clipSend, clipGet))));
+    let list = null, audio = null, sys = null, at = 0, busy = false;
+    const post = async (path, okMsg) => {
+      haptic();
+      try { await api(path, 'POST', 4000); if (okMsg) toast(okMsg, 'ok'); at = 0; load(); return true; }
+      catch (e) { toast(e?.status === 400 ? 'Allow PhoneBox in System Settings › Privacy & Security › Accessibility' : t('panel.pcNoAnswer'), 'warn'); return false; }
+    };
+    const otherDisplay = () => { const d = sys?.displays || []; return d.find((x) => !x.focused) || null; };
+    const drawApps = () => {
+      if (!list) return;
+      apps.replaceChildren(...list.slice(0, 16).map((a) => {
+        const img = document.createElement('img');
+        img.dataset.src = `${API}/system/apps/icon?bundle=${encodeURIComponent(a.bundleId)}`; // set once on the page
+        img.alt = '';
+        img.onerror = () => img.replaceWith(h('span', 'mc-letter', (a.name || '?').charAt(0)));
+        const b = h('button', 'mc-app' + (a.active ? ' on' : ''), img, h('span', 'mc-name', a.name));
+        b.type = 'button';
+        let hold = 0, held = false;
+        b.addEventListener('pointerdown', () => { held = false; hold = setTimeout(async () => {
+          held = true;
+          const d = otherDisplay();
+          if (!d) { toast('Only one display is connected', 'warn'); return; }
+          await post(`/system/apps/move?bundle=${encodeURIComponent(a.bundleId)}&display=${encodeURIComponent(d.id)}`, `${a.name} → ${d.name}`);
+        }, 550); });
+        const cancel = () => clearTimeout(hold);
+        b.addEventListener('pointerup', cancel); b.addEventListener('pointerleave', cancel); b.addEventListener('pointercancel', cancel);
+        b.addEventListener('click', () => { if (!held) post('/system/apps/activate?bundle=' + encodeURIComponent(a.bundleId)); });
+        return b;
+      }));
+      apps.querySelectorAll('img[data-src]').forEach((img) => { img.src = img.dataset.src; img.removeAttribute('data-src'); });
+      box.querySelector('.mc-sub').textContent = `${list.length} apps · hold one to move it to the other display`;
+    };
+    const drawPower = () => {
+      const p = sys?.power || {};
+      const btn = (cls, glyph, label, on, act) => {
+        const b = h('button', 'mc-pw ' + cls + (on ? ' on' : ''), icon(glyph), h('span', null, label));
+        b.type = 'button'; b.addEventListener('click', act); return b;
+      };
+      power.replaceChildren(
+        btn('awake', 'coffee', 'Keep awake', p.caffeinated, () => post('/system/caffeinate?on=' + !p.caffeinated, p.caffeinated ? 'The Mac may sleep again' : 'The Mac stays awake')),
+        btn('sleep', 'moon', 'Sleep display', false, () => post('/system/display/sleep')),
+        btn('lock', 'lock', 'Lock', false, () => post('/system/lock', 'Locked')),
+        ...(p.focusShortcuts ? [btn('focus', 'focus', 'Focus', !!p.focus, () => post('/system/focus?on=' + !p.focus))] : []));
+    };
+    const drawOuts = () => {
+      const l = audio?.outputs || [];
+      outs.replaceChildren(...l.map((d) => {
+        const b = h('button', 'mc-out' + (d.current ? ' on' : ''), icon(d.transport === 'bluetooth' ? 'headphones' : d.transport === 'builtin' ? 'laptop' : 'volume'), h('span', null, d.name));
+        b.type = 'button';
+        b.addEventListener('click', () => { for (const x of l) x.current = x === d; drawOuts(); post('/system/audio/output?id=' + encodeURIComponent(d.id)); });
+        return b;
+      }));
+      if (!l.length) outs.replaceChildren(h('span', 'muted', '—'));
+    };
+    clipSend.addEventListener('click', async () => {
+      const text = clip.value;
+      if (!text) return;
+      if (encodeURIComponent(text).length > 15000) { toast('Too long to send from the phone', 'warn'); return; }
+      if (await post('/system/clipboard?text=' + encodeURIComponent(text), 'On the Mac clipboard')) clip.value = '';
+    });
+    clipGet.addEventListener('click', async () => {
+      haptic();
+      try {
+        const r = await api('/system/clipboard');
+        if (r?.text == null) { toast('The Mac clipboard holds no text', 'warn'); return; }
+        clip.value = r.text;
+        try { await navigator.clipboard.writeText(r.text); toast('Copied from the Mac', 'ok'); } catch (_) { toast('The Mac clipboard is in the box', 'ok'); }
+      } catch (_) { toast(t('panel.pcNoAnswer'), 'warn'); }
+    });
+    const load = async () => {
+      if (busy || Date.now() - at < 3000) return;
+      busy = true;
+      try {
+        [list, audio, sys] = await Promise.all([api('/system/apps').catch(() => list), api('/system/audio').catch(() => audio), api('/system/controls').catch(() => sys)]);
+        at = Date.now();
+      } finally { busy = false; }
+      drawApps(); drawPower(); drawOuts();
+    };
+    drawPower();
+    return { update: load };
+  },
+};

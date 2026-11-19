@@ -152,15 +152,32 @@
     ],
     keyboard: { available: true, brightness: 40 },
     search: true,
+    power: { caffeinated: false, focusShortcuts: true, focus: false },
+  };
+  const demoApps = [['com.microsoft.VSCode', 'Code'], ['com.google.Chrome', 'Google Chrome'], ['com.spotify.client', 'Spotify'], ['com.apple.finder', 'Finder'],
+    ['com.tinyspeck.slackmacgap', 'Slack'], ['com.apple.Terminal', 'Terminal'], ['com.figma.Desktop', 'Figma'], ['com.apple.Music', 'Music']]
+    .map(([bundleId, name], i) => ({ bundleId, name, pid: 400 + i, active: i === 0, hidden: false }));
+  const demoOutputs = [
+    { id: 'BuiltInSpeakerDevice', name: 'MacBook Pro Speakers', transport: 'builtin', current: true },
+    { id: 'lg-ultrafine', name: 'LG ULTRAFINE', transport: 'displayport', current: false },
+    { id: 'airpods', name: 'AirPods Pro', transport: 'bluetooth', current: false }];
+  let demoClipboard = 'https://github.com/ersinkoc/phonebox';
+  const demoUsage = () => {
+    const day = (k) => new Date(now() - k * 864e5).toISOString().slice(0, 10);
+    const daily = [1.9, 3.4, 2.2, 4.8, 3.1, 5.6, 2.7].map((m, i) => ({ date: day(6 - i), tokens: Math.round(m * 1e6), costUsd: +(m * 1.9).toFixed(2) }));
+    return { today: daily[6], week: { tokens: daily.reduce((a, d) => a + d.tokens, 0), costUsd: +daily.reduce((a, d) => a + d.costUsd, 0).toFixed(2) }, daily,
+      projects: [['api-gateway', 9.8e6], ['docs-site', 6.1e6], ['mobile-app', 4.4e6], ['infra', 2.9e6]].map(([name, w]) => ({ name, tokensToday: Math.round(w / 6), tokensWeek: w, costWeekUsd: +(w / 1e6 * 1.9).toFixed(2) })),
+      models: [{ model: 'claude-opus-5-5', tokensWeek: 18e6 }], updatedAt: now() };
   };
   const SAMPLE_PROMPTS = [
     { tool: 'Run a command', detail: 'git push origin main --force-with-lease', description: 'Push the rebased branch', project: 'api-gateway' },
-    { tool: 'Edit a file', detail: 'src/routes/billing.ts\n\n  export const limit = rateLimit({ windowMs: 60_000, max: 120 })', description: '', project: 'docs-site' },
+    { tool: 'Edit a file', detail: 'src/routes/billing.ts\n\n  export const limit = rateLimit({ windowMs: 60_000, max: 120 })', description: '', project: 'docs-site',
+      diff: { path: 'src/routes/billing.ts', hunks: [{ old: "import { rateLimit } from './limits';\nexport const limit = rateLimit({ windowMs: 60_000, max: 120 });", new: "import { rateLimit } from './limits';\nexport const limit = rateLimit({ windowMs: 60_000, max: 200 });\nexport const burst = 20;" }] } },
     { tool: 'Fetch a web page', detail: 'https://docs.github.com/en/rest/pulls', description: '', project: 'blog-engine' },
   ];
   function ask(sample, broadcast = true) {
     const s = sample || SAMPLE_PROMPTS[Math.floor(Math.random() * SAMPLE_PROMPTS.length)];
-    const a = { id: Math.random().toString(16).slice(2, 10), source: 'Claude Code', session: 'demo', createdAt: now(), expiresAt: now() + 90e3, ...s };
+    const a = { id: Math.random().toString(16).slice(2, 10), source: 'Claude Code', session: 'demo', createdAt: now(), expiresAt: now() + 90e3, canAllowSession: s.kind !== 'question', ...s };
     approvals.push(a);
     if (broadcast) bc.postMessage({ type: 'ask', sample: s, id: a.id });
     emit('approval', { id: a.id }, false);
@@ -684,6 +701,29 @@
     if (path === '/api/procs') return json(procs());
     if (path === '/api/procs/detail') return json(procDetail(q.get('name')));
     if (path.startsWith('/api/widget/')) return json({ output: String(3 + Math.floor(Math.random() * 3)), at: now() - 8000, ok: true, running: false, durationMs: 412 });
+    // Mac controls: running apps, power, sound outputs, clipboard
+    if (path === '/api/system/apps' && method === 'GET') return json(demoApps);
+    if (path === '/api/system/apps/activate' && method === 'POST') { demoApps.forEach((a) => (a.active = a.bundleId === q.get('bundle'))); return json({ ok: true }); }
+    if (path === '/api/system/apps/move' && method === 'POST') return json({ ok: true });
+    if (path === '/api/system/audio' && method === 'GET') return json({ outputs: demoOutputs });
+    if (path === '/api/system/audio/output' && method === 'POST') { demoOutputs.forEach((o) => (o.current = o.id === q.get('id'))); return json({ ok: true }); }
+    if (path === '/api/system/clipboard' && method === 'GET') return json({ text: demoClipboard });
+    if (path === '/api/system/clipboard' && method === 'POST') { demoClipboard = q.get('text') || ''; return json({ ok: true }); }
+    if (path === '/api/system/caffeinate' && method === 'POST') { sysControls.power.caffeinated = q.get('on') === 'true'; return json({ ok: true }); }
+    if (path === '/api/system/focus' && method === 'POST') { sysControls.power.focus = q.get('on') === 'true'; return json({ ok: true }); }
+    if ((path === '/api/system/display/sleep' || path === '/api/system/lock') && method === 'POST') return json({ ok: true });
+    // Claude usage and new sessions
+    if (path === '/api/usage' && method === 'GET') return json(demoUsage());
+    if (path === '/api/sessions/projects' && method === 'GET') return json([
+      { cwd: '/Users/you/code/api-gateway', name: 'api-gateway', lastUsed: now() - 3e5 },
+      { cwd: '/Users/you/code/docs-site', name: 'docs-site', lastUsed: now() - 9e5 },
+      { cwd: '/Users/you/code/mobile-app', name: 'mobile-app', lastUsed: now() - 4e6 }]);
+    if (path === '/api/sessions/new' && method === 'POST') {
+      const res = await handle('POST', '/api/sessions/prompt', new URLSearchParams({ id: 'new:' + Math.random().toString(16).slice(2, 8), text: q.get('text') || '' }), null, new Headers());
+      const body = await res.clone().json();
+      if (body.runId) { const r = Object.values(sessionRuns).find((x) => x.runId === body.runId); body.sessionId = r.sessionId; }
+      return json(body, res.status);
+    }
     // Control center: two displays (focus moves the pointer), brightness, keyboard backlight, Spotlight search
     if (path === '/api/system/controls' && method === 'GET') return json(sysControls);
     if (path === '/api/system/display/focus' && method === 'POST') {
@@ -842,6 +882,12 @@
     if (/\/api\/media\/art\?session=chrome/.test(src)) img.src = sessionArt(src.includes('%3A9') ? 'netflix' : 'youtube');
     else if (/\/api\/(art|media\/art|controls\/radio-logo)|^https:\/\/i\.scdn\.co\/image\/demo\d+$/.test(src)) img.src = ART;
     else if (/\/api\/apps\/icon/.test(src)) img.src = appIcon(new URL(src, location.href).searchParams.get('id'));
+    else if (/\/api\/system\/apps\/icon/.test(src)) {
+      // made-up app icons for the Mac controls card: a coloured squircle with the app's initial
+      const a = demoApps.find((x) => x.bundleId === new URL(src, location.href).searchParams.get('bundle')) || { name: '?' };
+      const hue = [...a.name].reduce((n, c) => n + c.charCodeAt(0), 0) * 37 % 360;
+      img.src = 'data:image/svg+xml,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96"><rect x="6" y="6" width="84" height="84" rx="22" fill="hsl(${hue} 60% 50%)"/><text x="48" y="62" font-family="system-ui,sans-serif" font-size="42" font-weight="700" text-anchor="middle" fill="#fff">${a.name.slice(0, 1)}</text></svg>`);
+    }
   };
   new MutationObserver((list) => {
     for (const m of list) {

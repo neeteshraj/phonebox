@@ -11,6 +11,15 @@ import { W } from '../registry.js';
 // session never ends or answers another's.
 const sessions = new Map();
 window.onAndroidSpeech = (kind, text, id) => { const handler = sessions.get(id); if (handler) handler(kind, text); };
+/** One speech session for another part of the panel (the session chat's mic): onEvent(kind, text) gets
+ *  'ready' | 'partial' | 'final' | 'error'. Returns the session id (0 when speech is unavailable). */
+export function dictateInto(onEvent) {
+  if (!bridge?.listen || !bridge.canListen?.()) return 0;
+  const id = bridge.listen('', false) || 0;
+  if (id) sessions.set(id, (kind, text) => { if (kind === 'final' || kind === 'error') sessions.delete(id); onEvent(kind, text); });
+  return id;
+}
+export const stopDictation = (id) => { if (id) bridge?.stopListening?.(id); };
 
 const MAX_CHARS = 1000; // Dictation.MaxChars on the agent
 

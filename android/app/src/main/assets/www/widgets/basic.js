@@ -1,5 +1,6 @@
-import { runListeners, sessionRuns, monogramColor, sheetDrag, $, API, D, LEVEL_COLOR, LOCALE, mediaHtml, METRICS, PANEL_HEADERS, PREVIEW, Q_STYLE, S_ORDER, ago, api, averageColor, buildLayout, buzz, cfg, cfgVersion, chart, color, cssVar, currentProcessesSort, emit, fillIcon, fmtClock, fmtDur, fmtHM, fmtMem, fmtReset, fmtTime, fmtValue, gotoProcesses, gpuMem, gpusOf, h, en, haptic, hasProcessesPage, hist, hour12, icon, keyButton, levelOf, media, metricText, online, openSheet, paceInfo, pad, prRow, pushView, quotaProviders, r1, registerProcessesSorter, renderStatus, ringSvg, setArtColor, configMark, configReadSince, localWriteStored, setMediaState, setVolDragging, shortDur, shortGpu, store, t, tick, toast, volDragging, wxBlock, wxDeg, wxIcon } from '../main.js';
+import { bridge, runListeners, sessionRuns, monogramColor, sheetDrag, $, API, D, LEVEL_COLOR, LOCALE, mediaHtml, METRICS, PANEL_HEADERS, PREVIEW, Q_STYLE, S_ORDER, ago, api, averageColor, buildLayout, buzz, cfg, cfgVersion, chart, color, cssVar, currentProcessesSort, emit, fillIcon, fmtClock, fmtDur, fmtHM, fmtMem, fmtReset, fmtTime, fmtValue, gotoProcesses, gpuMem, gpusOf, h, en, haptic, hasProcessesPage, hist, hour12, icon, keyButton, levelOf, media, metricText, online, openSheet, paceInfo, pad, prRow, pushView, quotaProviders, r1, registerProcessesSorter, renderStatus, ringSvg, setArtColor, configMark, configReadSince, localWriteStored, setMediaState, setVolDragging, shortDur, shortGpu, store, t, tick, toast, volDragging, wxBlock, wxDeg, wxIcon } from '../main.js';
 import { W } from '../registry.js';
+import { dictateInto, stopDictation } from './dictate.js';
 import { invalidateDeckState } from './controls.js';
 
 /** The chance of rain under a forecast cell, from 20 % up, with a drop glyph. */
@@ -103,12 +104,45 @@ W.forecast = {
   },
 };
 
+/** A sheet to start a new Claude Code session: pick one of the recent project folders, then talk to it. */
+function openNewSession() {
+  haptic();
+  const backdrop = h('div', 'session-backdrop');
+  const panel = h('div', 'session-panel has-chat');
+  panel.setAttribute('role', 'dialog');
+  panel.setAttribute('aria-modal', 'true');
+  const close = h('button', 'session-close', icon('x'));
+  close.setAttribute('aria-label', 'Close');
+  const dismiss = () => { backdrop.remove(); panel._cleanup?.(); };
+  close.addEventListener('click', dismiss);
+  backdrop.addEventListener('click', (e) => { if (e.target === backdrop) dismiss(); });
+  const chips = h('div', 'proj-chips', h('span', 'muted', t('w.loading')));
+  let cwd = '';
+  panel.append(h('div', 'sheet-grab'), h('div', 'session-panel-head', h('span', null, '✳ Claude Code'), close), h('h2', null, 'New session'), chips);
+  const s = { id: 'new:pending', tool: 'claude' };
+  panel.append(...sessionChat(s, panel, { newIn: () => cwd }));
+  sheetDrag(panel, dismiss);
+  backdrop.append(panel);
+  document.body.append(backdrop);
+  api('/sessions/projects').then((list) => {
+    if (!Array.isArray(list) || !list.length) { chips.replaceChildren(h('span', 'muted', 'No recent projects')); return; }
+    chips.replaceChildren(...list.slice(0, 12).map((p, i) => {
+      const b = h('button', 'proj-chip' + (i === 0 ? ' on' : ''), p.name);
+      b.type = 'button';
+      b.title = p.cwd;
+      b.addEventListener('click', () => { haptic(); cwd = p.cwd; chips.querySelectorAll('.proj-chip').forEach((x) => x.classList.toggle('on', x === b)); });
+      return b;
+    }));
+    cwd = list[0].cwd;
+  }).catch(() => chips.replaceChildren(h('span', 'muted', t('panel.pcUnreachable'))));
+}
+
 /**
  * The conversation part of a session's sheet: the last prompt sent from the phone and the reply streaming back
  * ("session-run" events), and a box to send the next one. The agent runs it headlessly in the session's folder;
  * tool permissions still arrive as the usual permission prompt.
  */
-function sessionChat(s, panel) {
+function sessionChat(s, panel, { newIn = null } = {}) {
   const thread = h('div', 'chat-thread');
   const input = document.createElement('textarea');
   input.className = 'chat-input';
@@ -119,6 +153,23 @@ function sessionChat(s, panel) {
   send.type = 'button';
   send.setAttribute('aria-label', t('sess.send'));
   const hint = h('div', 'chat-hint');
+  // speak the prompt: the words land in the box (partial results live), you read them over and send
+  const mic = h('button', 'chat-mic', icon('mic'));
+  mic.type = 'button';
+  mic.setAttribute('aria-label', 'Dictate');
+  mic.hidden = !(bridge?.listen && bridge?.canListen);
+  let speech = 0;
+  mic.addEventListener('click', () => {
+    haptic();
+    if (speech) { stopDictation(speech); return; }
+    const before = input.value ? input.value.replace(/\s*$/, ' ') : '';
+    speech = dictateInto((kind, text) => {
+      if (kind === 'partial' || kind === 'final') { input.value = before + text; grow(); }
+      if (kind === 'final' || kind === 'error') { speech = 0; mic.classList.remove('on'); }
+    });
+    mic.classList.toggle('on', !!speech);
+    if (!speech) say('Speech recognition is not available on this phone');
+  });
   let run = sessionRuns.get(s.id) || null, sending = false;
   const busy = () => run?.status === 'running';
   const draw = () => {
@@ -134,7 +185,7 @@ function sessionChat(s, panel) {
     panel.classList.toggle('chatting', items.length > 0);
   };
   const say = (msg) => { hint.textContent = msg || ''; };
-  const onRun = (r) => { if (r.sessionId === s.id) { run = r; draw(); } };
+  const onRun = (r) => { if (r.sessionId === s.id || (r.realSessionId && r.realSessionId === s.id)) { run = r; draw(); } };
   runListeners.add(onRun);
   // the keyboard covers the bottom of the screen: lift the sheet by the part of the window it hides
   const vv = window.visualViewport;
@@ -159,9 +210,20 @@ function sessionChat(s, panel) {
     run = { runId: null, sessionId: s.id, status: 'running', items: [...(run?.items || []), { role: 'user', text }] };
     draw();
     try {
-      // in the query string: the phone app's proxy forwards no request body (like the Note widget's text)
-      const r = await fetch(`${API}/sessions/prompt?id=${encodeURIComponent(s.id)}&text=${encodeURIComponent(text)}`, { method: 'POST', headers: PANEL_HEADERS });
-      if (r.ok) { input.value = ''; grow(); if (!run.runId) run.runId = (await r.json().catch(() => ({}))).runId || null; }
+      // in the query string: the phone app's proxy forwards no request body (like the Note widget's text).
+      // A new session's first prompt starts it in the chosen folder; later ones continue the real session.
+      const fresh = newIn && s.id.startsWith('new:') && !run.realSessionId && run.items.length <= 1;
+      if (newIn && run.realSessionId) s.id = run.realSessionId;
+      const url = fresh ? `${API}/sessions/new?cwd=${encodeURIComponent(newIn())}&text=${encodeURIComponent(text)}`
+        : `${API}/sessions/prompt?id=${encodeURIComponent(s.id)}&text=${encodeURIComponent(text)}`;
+      if (fresh && !newIn()) { say('Pick a project first'); run = { ...run, status: 'error', items: run.items.slice(0, -1) }; draw(); return; }
+      const r = await fetch(url, { method: 'POST', headers: PANEL_HEADERS });
+      if (r.ok) {
+        input.value = ''; grow();
+        const body = await r.json().catch(() => ({}));
+        if (fresh && body.sessionId) { s.id = body.sessionId; run.sessionId = s.id; }
+        if (!run.runId) run.runId = body.runId || null;
+      }
       else {
         run = { ...run, status: 'error', items: run.items.slice(0, -1) };
         say(r.status === 403 ? t('sess.promptsOff') : r.status === 409 ? t('sess.busyNow') : ((await r.json().catch(() => ({}))).error || t('panel.pcUnreachable')));
@@ -174,13 +236,13 @@ function sessionChat(s, panel) {
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); } });
   draw();
   // fetch the last run in case it happened while the sheet was closed
-  api('/sessions/run?id=' + encodeURIComponent(s.id)).then((r) => { if (r && r.sessionId === s.id) { run = r; sessionRuns.set(s.id, r); draw(); } }).catch(() => {});
-  return [thread, hint, h('div', 'chat-compose', input, send)];
+  if (!s.id.startsWith('new:')) api('/sessions/run?id=' + encodeURIComponent(s.id)).then((r) => { if (r && r.sessionId === s.id) { run = r; sessionRuns.set(s.id, r); draw(); } }).catch(() => {});
+  return [thread, hint, h('div', 'chat-compose', mic, input, send)];
 }
 
 W.media = {
   needs: ['state', 'fast'],
-  create(box) {
+  create(box, { o = {} } = {}) {
     box.innerHTML = mediaHtml();
     const q = (s) => box.querySelector(s);
     const img = q('.art'), vol = q('.volr');
@@ -193,6 +255,34 @@ W.media = {
       'Internet Radio': '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.2 6.8 18.5 2a1 1 0 0 1 .7 1.9L10.8 7H20a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h2.2zm1.8 5.2a3 3 0 1 0 0 6 3 3 0 0 0 0-6zm6 1.5v1.8h4v-1.8h-4zm0 3.2v1.8h4v-1.8h-4z" fill="#38bdf8"/></svg>',
     };
     let artId = -1, volTimer = 0, volumeRelease = 0;
+    // Synced lyrics (option): looked up on lrclib.net by artist, title and length when the track changes; the line
+    // for the current position is shown under the artist. Off by default: it sends the song's name to that site.
+    const lyric = h('div', 'm-lyric');
+    if (o.lyrics) q('.m-text').append(lyric);
+    let lyricKey = '', lines = null;
+    const findLyrics = async (m) => {
+      const key = `${m.artist}|${m.title}`;
+      if (!o.lyrics || key === lyricKey) return;
+      lyricKey = key; lines = null; lyric.replaceChildren();
+      if (!m.title || !m.artist) return;
+      try {
+        const qs = `artist_name=${encodeURIComponent(m.artist)}&track_name=${encodeURIComponent(m.title)}` + (m.durMs > 0 ? `&duration=${Math.round(m.durMs / 1000)}` : '');
+        const r = await fetch('https://lrclib.net/api/get?' + qs, { cache: 'force-cache' });
+        const j = r.ok ? await r.json() : null;
+        if (key !== lyricKey || !j?.syncedLyrics) return;
+        lines = j.syncedLyrics.split('\n').map((l) => { const x = /^\[(\d+):(\d+(?:\.\d+)?)\]\s*(.*)$/.exec(l); return x ? { at: (+x[1] * 60 + +x[2]) * 1000, text: x[3] } : null; }).filter((l) => l && l.text);
+      } catch (_) {}
+    };
+    let lyricShown = -2;
+    const paintLyric = (pos) => {
+      if (!lines?.length) { if (lyricShown !== -2) { lyric.replaceChildren(); lyricShown = -2; } return; }
+      let i = -1;
+      for (let k = 0; k < lines.length && lines[k].at <= pos + 250; k++) i = k;
+      if (i === lyricShown) return;
+      lyricShown = i;
+      lyric.replaceChildren(h('b', null, i >= 0 ? lines[i].text : '♪'), h('span', null, lines[i + 1]?.text || ''));
+      lyric.classList.remove('in'); void lyric.offsetWidth; lyric.classList.add('in');
+    };
     // Several players at once (state.mediaSessions, e.g. two YouTube tabs and Spotify): the card shows one, a dot
     // per player, and switches on a swipe or a dot tap. Controls then go to the player on screen (?session=id).
     let sel = null, view = null, swiped = false;
@@ -307,6 +397,7 @@ W.media = {
             const pos = Math.min(mv.durMs, mv.posMs + (mv.playing ? performance.now() - mv.at : 0));
             q('.fill').style.width = (pos / mv.durMs) * 100 + '%';
             q('.m-pos').textContent = fmtTime(pos);
+            if (o.lyrics) paintLyric(pos);
           } else if (mv.app === 'Internet Radio') {
             const pos = Math.max(0, (mv.posMs || 0) + (mv.playing ? performance.now() - mv.at : 0));
             q('.fill').style.width = mv.playing ? '100%' : '0';
@@ -343,6 +434,7 @@ W.media = {
           return;
         }
         box.classList.toggle('playing', m.playing);
+        findLyrics(m);
         q('.m-app-name').textContent = m.app || 'Media';
         sourceIcon.innerHTML = sourceIcons[m.app] || '';
         q('.m-title').textContent = m.title || 'Unknown track';
@@ -733,7 +825,10 @@ W.sessions = {
   create(box) {
     const sum = h('span', 'w-sum');
     const list = h('div', 's-list', h('div', 'empty', t('sess.waitingData')));
-    box.append(h('div', 'w-head', h('span', 's-label', t('w.sessions')), sum), list);
+    const add = h('button', 'mini-btn sess-new', '+ New');
+    add.type = 'button';
+    add.addEventListener('click', () => openNewSession());
+    box.append(h('div', 'w-head', h('span', 's-label', t('w.sessions')), sum, add), list);
     box.style.setProperty('--c', '#d97757');
     const tokens = (n) => n == null ? '—' : n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : String(n);
     const statusText = (s) => s.status === 'busy' ? t('sess.working') : s.status === 'waiting' ? t('sess.waiting') : s.status === 'shell' ? t('sess.shell') : s.outcome === 'completed' ? t('sess.completed') : s.outcome === 'aborted' ? t('sess.aborted') : t('sess.idle');
@@ -1387,6 +1482,49 @@ W.inbox = {
           e.style.setProperty('--lc', LEVEL_COLOR[n.level] || 'var(--dim)');
           return e;
         }) : [h('div', 'empty', t('w.notifyEmpty'))]));
+      },
+    };
+  },
+};
+
+// ---------------------------------------------------------------- Claude usage
+// Tokens and cost from the local Claude Code transcripts (GET /api/usage, refreshed by the agent every minute).
+W.usage = {
+  needs: ['state'],
+  create(box, { o }) {
+    box.style.setProperty('--c', '#d97757');
+    const head = h('div', 'w-head', h('span', 's-label', o.title || 'Claude usage'), h('span', 'w-sum'));
+    const hero = h('div', 'us-hero');
+    const bars = h('div', 'us-bars');
+    const projs = h('div', 'us-projs');
+    box.append(head, hero, bars, projs);
+    let at = 0, busy = false;
+    const fmtTok = (n) => n >= 1e9 ? (n / 1e9).toFixed(1) + 'B' : n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'k' : String(n || 0);
+    const usd = (v) => v == null ? '' : '$' + (v >= 100 ? Math.round(v) : v.toFixed(2));
+    const draw = (u) => {
+      head.querySelector('.w-sum').textContent = `This week ${fmtTok(u.week?.tokens)} · ${usd(u.week?.costUsd)}${u.costPartial ? '+' : ''}`;
+      hero.replaceChildren(h('b', null, fmtTok(u.today?.tokens)), h('span', null, 'tokens today'), h('em', null, usd(u.today?.costUsd)));
+      const days = u.daily || [];
+      const max = Math.max(1, ...days.map((d) => d.tokens || 0));
+      bars.replaceChildren(...days.map((d, i) => {
+        const day = new Date(d.date + 'T12:00:00').toLocaleDateString(LOCALE, { weekday: 'narrow' });
+        const col = h('div', 'us-bar' + (i === days.length - 1 ? ' today' : ''), h('i'), h('span', null, day));
+        col.querySelector('i').style.height = Math.max(3, (d.tokens / max) * 100) + '%';
+        col.title = `${d.date}: ${fmtTok(d.tokens)} · ${usd(d.costUsd)}`;
+        return col;
+      }));
+      const p = (u.projects || []).slice(0, 4), pmax = Math.max(1, ...p.map((x) => x.tokensWeek || 0));
+      projs.replaceChildren(...p.map((x) => {
+        const r = h('div', 'us-proj', h('span', null, x.name), h('b', null, fmtTok(x.tokensWeek)));
+        r.style.setProperty('--w', ((x.tokensWeek || 0) / pmax) * 100 + '%');
+        return r;
+      }));
+    };
+    return {
+      async update() {
+        if (busy || Date.now() - at < 30000) return;
+        busy = true;
+        try { const u = await api('/usage'); if (u) { draw(u); at = Date.now(); } } catch (_) {} finally { busy = false; }
       },
     };
   },

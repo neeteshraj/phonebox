@@ -629,3 +629,33 @@ test('the control center lists the displays, moves the focus to one, and has sli
   await cc.locator('.cc2-search input').press('Enter');
   await expect(page.locator('#toast')).toContainText('budget.xlsx');
 });
+
+test('an edit prompt shows its diff and can be allowed for the rest of the session', async ({ page }) => {
+  await page.goto('/panel/');
+  await expect(page.locator('.w').first()).toBeVisible();
+  await page.evaluate(() => window.PhoneBoxDemo.ask({ tool: 'Edit a file', project: 'docs-site', detail: 'x',
+    diff: { path: 'a.ts', hunks: [{ old: 'keep\nmax: 120', new: 'keep\nmax: 200' }] } }));
+  const prompt = page.locator('#approval');
+  await expect(prompt.locator('.diff-l.del')).toHaveText('max: 120');
+  await expect(prompt.locator('.diff-l.add')).toHaveText('max: 200');
+  await prompt.getByRole('button', { name: 'This session' }).click();
+  await expect(prompt).toBeHidden();
+  await expect(page.locator('#toast')).toContainText('this session');
+});
+
+test('Mac controls and Claude usage cards render their data and act', async ({ page }) => {
+  await page.goto('/panel/');
+  await page.evaluate(() => {
+    const cfg = JSON.parse(localStorage.getItem('pb-demo-config') || '{}');
+    localStorage.setItem('pb-demo-config', JSON.stringify({ ...cfg, night: { enabled: false }, pages: [{ id: 'p', title: 'P', enabled: true, widgets: [
+      { id: 'mac', type: 'mac', x: 0, y: 0, w: 8, h: 6, options: {} }, { id: 'u', type: 'usage', x: 8, y: 0, w: 4, h: 6, options: {} }] }] }));
+  });
+  await page.reload();
+  await expect(page.locator('.mc-app')).toHaveCount(8);
+  await page.locator('.mc-out', { hasText: 'AirPods' }).click();
+  await expect(page.locator('.mc-out.on')).toContainText('AirPods');
+  await page.locator('.mc-pw.awake').click();
+  await expect(page.locator('#toast')).toContainText('stays awake');
+  await expect(page.locator('.us-bar')).toHaveCount(7);
+  await expect(page.locator('.us-proj').first()).toContainText('api-gateway');
+});
