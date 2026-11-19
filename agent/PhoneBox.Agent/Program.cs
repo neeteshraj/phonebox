@@ -67,6 +67,7 @@ builder.Services.AddSingleton<PushStore>();
 builder.Services.AddSingleton<CommandRunner>();
 builder.Services.AddSingleton<ApprovalStore>();
 builder.Services.AddSingleton<SessionPrompts>();
+builder.Services.AddSingleton<ClaudeProjects>();
 builder.Services.AddSingleton<HomeAssistant>();
 builder.Services.AddSingleton<AppConsole>();
 builder.Services.AddSingleton<Dictation>();
@@ -76,6 +77,7 @@ AddMonitor<MediaMonitor>(builder.Services);
 AddMonitor<QuotaMonitor>(builder.Services);
 AddMonitor<ProcessMonitor>(builder.Services);
 AddMonitor<SessionMonitor>(builder.Services);
+AddMonitor<ClaudeUsage>(builder.Services);
 AddMonitor<FeedMonitor>(builder.Services);
 builder.Services.AddSingleton<PhotoFrame>();
 builder.Services.AddSingleton<CameraFeeds>();
@@ -698,6 +700,15 @@ app.MapPost("/api/sessions/prompt", async (string? id, string? text, HttpRequest
     var (status, body) = prompts.Start(id, text);
     return Results.Json(body, statusCode: status);
 });
+// New session from the phone: only in a folder /api/sessions/projects lists (see ClaudeProjects.cs).
+app.MapGet("/api/sessions/projects", (ClaudeProjects projects) => Results.Json(projects.List()));
+app.MapPost("/api/sessions/new", (string? cwd, string? text, SessionPrompts prompts, ClaudeProjects projects) =>
+{
+    var (status, body) = prompts.StartNew(cwd, text, projects.IsAllowed);
+    return Results.Json(body, statusCode: status);
+});
+// Claude Code tokens and cost over the last 7 days (see ClaudeUsage.cs); computed in the background.
+app.MapGet("/api/usage", (ClaudeUsage usage) => Results.Json(usage.Report()));
 app.MapPost("/api/sessions/prompt/cancel", (string? runId, SessionPrompts prompts) =>
     runId is not null && prompts.Cancel(runId) ? Results.Ok() : Results.NotFound());
 app.MapGet("/api/sessions/run", (string? id, SessionPrompts prompts) =>

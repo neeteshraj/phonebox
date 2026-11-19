@@ -21,12 +21,19 @@ public static class ClaudeHook
         if (input.ValueKind != JsonValueKind.Object) return null;
         var c = cfg.Get().Claude;
         if (!c.PhoneApprovals) return null;
-        if (c.OnlyWhenAway && Idle.Seconds() < 60) return null;
 
         var tool = Str(input, "tool_name") ?? "a tool";
         var ti = input.TryGetProperty("tool_input", out var t) && t.ValueKind == JsonValueKind.Object ? t : default;
         var cwd = Str(input, "cwd") ?? "";
         var sessionId = Str(input, "session_id") ?? "";
+        var rule = RuleContent(tool, ti);
+        // allowed for this session from the phone earlier: answered here, the phone is not asked again
+        if (tool != "AskUserQuestion" && approvals.AllowedForSession(sessionId, tool, rule))
+        {
+            approvals.LogSessionAllow(sessionId, tool);
+            return Output("allow", tool, rule);
+        }
+        if (c.OnlyWhenAway && Idle.Seconds() < 60) return null;
         var session = sessions.Snapshot().FirstOrDefault(s => s.Id == "claude:" + sessionId);
         var project = session?.Name ?? ProjectName(cwd);
         var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -34,20 +41,84 @@ public static class ClaudeHook
         var question = tool == "AskUserQuestion";
         var a = new Approval(ApprovalStore.NewId(), "Claude Code", sessionId, project, ToolTitle(tool), question ? QuestionDetail(ti) : Detail(tool, ti),
             ti.ValueKind == JsonValueKind.Object ? Str(ti, "description") : null, now, now + Math.Clamp(c.TimeoutSec, 10, 3600) * 1000L,
-            question ? "question" : "permission");
+            question ? "question" : "permission", question ? null : BuildDiff(tool, ti));
 
         var decision = await approvals.AskAsync(a, aborted);
         if (decision is null or "skip") return null; // no decision: Claude Code asks in the terminal as usual
-        return new
+        if (decision == "allow-session") approvals.AllowForSession(sessionId, tool, rule);
+        return Output(decision, tool, rule);
+    }
+
+    /// <summary>
+    /// The hook's output. "allow-session" also adds a session-scoped allow rule (PermissionRequest
+    /// <c>decision.updatedPermissions</c>, destination "session": in memory, gone when the session ends), so Claude
+    /// Code itself stops asking; <see cref="ApprovalStore.AllowForSession"/> is the guarantee for what still reaches the hook.
+    /// </summary>
+    internal static object Output(string decision, string tool, string? rule) => new
+    {
+        hookSpecificOutput = new
         {
-            hookSpecificOutput = new
+            hookEventName = "PermissionRequest",
+            decision = decision switch
             {
-                hookEventName = "PermissionRequest",
-                decision = decision == "allow"
-                    ? (object)new { behavior = "allow" }
-                    : new { behavior = "deny", message = "Denied from the PhoneBox panel." },
+                "allow" => (object)new { behavior = "allow" },
+                "allow-session" => new
+                {
+                    behavior = "allow",
+                    updatedPermissions = new object[]
+                    {
+                        new
+                        {
+                            type = "addRules",
+                            rules = new[] { rule is null ? (object)new { toolName = tool } : new { toolName = tool, ruleContent = rule } },
+                            behavior = "allow",
+                            destination = "session",
+                        },
+                    },
+                },
+                _ => new { behavior = "deny", message = "Denied from the PhoneBox panel." },
             },
-        };
+        },
+    };
+
+    /// <summary>What "allow for this session" covers: a Bash command exactly; any other tool as a whole.</summary>
+    internal static string? RuleContent(string tool, JsonElement ti) => tool == "Bash" ? Str(ti, "command") ?? "" : null;
+
+    private const int MaxDiffChars = 4000, MaxHunks = 20;
+
+    /// <summary>The change a file tool asks for, as old/new hunks; null for other tools.</summary>
+    internal static ApprovalDiff? BuildDiff(string tool, JsonElement ti)
+    {
+        if (ti.ValueKind != JsonValueKind.Object) return null;
+        var path = Str(ti, "file_path") ?? Str(ti, "notebook_path") ?? "";
+        var hunks = new List<DiffHunk>();
+        switch (tool)
+        {
+            case "Edit":
+                hunks.Add(Hunk(Str(ti, "old_string"), Str(ti, "new_string")));
+                break;
+            case "MultiEdit" when ti.TryGetProperty("edits", out var edits) && edits.ValueKind == JsonValueKind.Array:
+                foreach (var e in edits.EnumerateArray().Where(e => e.ValueKind == JsonValueKind.Object).Take(MaxHunks))
+                    hunks.Add(Hunk(Str(e, "old_string"), Str(e, "new_string")));
+                break;
+            case "Write":
+                hunks.Add(Hunk("", Str(ti, "content")));
+                break;
+            case "NotebookEdit":
+                hunks.Add(Hunk("", Str(ti, "new_source")));
+                break;
+            default: return null;
+        }
+        return new ApprovalDiff(path, hunks);
+    }
+
+    private static DiffHunk Hunk(string? oldText, string? newText) => new(Clip(oldText ?? "", MaxDiffChars), Clip(newText ?? "", MaxDiffChars));
+
+    private static string Clip(string s, int max)
+    {
+        if (s.Length <= max) return s;
+        var cut = char.IsHighSurrogate(s[max - 1]) ? max - 1 : max;
+        return s[..cut] + "…";
     }
 
     /// <summary>
