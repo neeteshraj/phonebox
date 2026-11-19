@@ -327,4 +327,14 @@ public sealed class PhoneSessionFeaturesTests : IDisposable
     [InlineData("/Users/me/Desktop/phonebox", false)]
     public void TemporaryFoldersAreNotProjects(string cwd, bool temporary) =>
         Assert.Equal(temporary, PhoneBox.Agent.ClaudeProjects.IsTemporary(cwd));
+
+    [Theory]
+    [InlineData("open", "-a Terminal", "Terminal")]
+    [InlineData("open", "-a \"Visual Studio Code\"", "Visual Studio Code")]
+    [InlineData("open", "~", "Finder")]
+    [InlineData("open", "-n /tmp/x", null)]
+    [InlineData("https://github.com", null, null)]
+    [InlineData("builtin:mute", null, null)]
+    public void ShortcutsKnowTheAppTheyOpen(string cmd, string? args, string? app) =>
+        Assert.Equal(app, PhoneBox.Agent.ShortcutApps.AppName(cmd, args));
 }

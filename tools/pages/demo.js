@@ -18,7 +18,10 @@
     ['files', 'Files', '📁', '#e5b84b'], ['music', 'Spotify', '🎧', '#1db954'], ['chat', 'Discord', '💬', '#6366f1'],
     ['snip', 'Snip', '✂️', '#14b8a6'], ['taskmgr', 'Task Manager', '📊', '#22c55e'], ['mute', 'Mute', '🔇', '#f59e0b'],
     ['screenoff', 'Screen Off', '🌙', '#8b5cf6'], ['lock', 'Lock', '🔒', '#ef4444'], ['settings', 'Settings', '⚙️', '#94a3b8'],
-  ].map(([id, label, icon, color]) => ({ id, label, icon, color, cmd: id === 'mute' ? 'builtin:mute' : 'demo', args: null, toggle: false }));
+  ].map(([id, label, icon, color]) => ({ id, label, icon, color, cmd: id === 'mute' ? 'builtin:mute' : 'demo', args: null, toggle: false,
+    // what the launcher needs: built-in actions apart from apps, and the app's bundle id to show it as running
+    kind: ['mute', 'screenoff', 'lock'].includes(id) ? 'action' : 'app',
+    bundle: { terminal: 'com.apple.Terminal', code: 'com.microsoft.VSCode', music: 'com.spotify.client', files: 'com.apple.finder' }[id] || null }));
   const PAGES = ['home', 'dashboard', 'ai', 'work', 'system', 'procs', 'deck', 'music', 'status', 'ambient', 'world', 'daily', 'markets', 'feeds', 'focus', 'calm', 'clock', 'automation', 'planner', 'nightstand', 'weekend', 'focuswork',
     'codexbar', 'devops', 'audio-deck', 'stream-deck', 'meeting-deck', 'development-deck', 'music-deck', 'system-deck'];
 
@@ -115,7 +118,9 @@
       // iconRev / iconUpload: the agent sets them when a shortcut has a picture (and when the user uploaded it). The demo
       // has no uploads and serves no /agent/api/shortcuts/icon, so a config that sets them also needs that image mocked
       // (see button-cover.spec.js); without one the key keeps its emoji.
-      shortcuts: (c.shortcuts || []).map(({ id, label, icon, color, toggle, cmd, iconRev, iconUpload }) => ({ id, label, icon, color, toggle: !!toggle || cmd === 'builtin:mute', iconRev: iconRev ?? null, iconUpload: iconUpload === true })),
+      shortcuts: (c.shortcuts || []).map(({ id, label, icon, color, toggle, cmd, iconRev, iconUpload, bundle }) => ({ id, label, icon, color, toggle: !!toggle || cmd === 'builtin:mute', iconRev: iconRev ?? null, iconUpload: iconUpload === true,
+        // like the agent: built-in actions apart from apps (the demo marks its screen-off and lock keys as actions too)
+        kind: String(cmd).startsWith('builtin:') || ['screenoff', 'lock'].includes(id) ? 'action' : 'app', bundle: bundle ?? null })),
       rules: (c.rules || []).map(({ id, name, enabled, when }) => ({ id, name, enabled: enabled !== false, when })),
       charge: { enabled: !!c.charge?.enabled, min: c.charge?.min ?? 50, max: c.charge?.max ?? 80 },
     };

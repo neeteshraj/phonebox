@@ -1009,6 +1009,49 @@ export function applyToggles(root) {
   root.querySelectorAll('.key.toggle').forEach((b) => b.classList.toggle('on', t[b.dataset.id] === true));
 }
 
+const ACTION_STATE = { 'monitor-off': 'Turn the display off', monitoroff: 'Turn the display off', screenoff: 'Turn the display off', lock: 'Lock the Mac', sleep: 'Put the Mac to sleep' };
+
+function launcher(box, list, o) {
+  // iOS-style: apps on a wallpaper as squircle icons, the first four in a frosted Dock, and the built-in actions
+  // (mute, screen off, lock …) as Control Center tiles beside the grid.
+  box.classList.add('lx');
+  const apps = list.filter((s) => s.kind !== 'action'), acts = list.filter((s) => s.kind === 'action');
+  const dockN = apps.length > 5 ? Math.min(4, apps.length - 1) : 0;
+  const dockApps = apps.slice(0, dockN), homeApps = apps.slice(dockN);
+  const appKey = (s) => { const b = keyButton(s); b.classList.add('lx-app'); b.append(h('i', 'lx-dot')); return b; };
+  const homeKeys = homeApps.map(appKey), dockKeys = dockApps.map(appKey);
+  const actKeys = acts.map((s) => { const b = keyButton(s); b.classList.add('lx-cc'); b.append(h('span', 'lx-state')); return b; });
+  const grid = h('div', 'lx-grid', ...homeKeys);
+  grid.style.setProperty('--cols', String(Math.min(5, Math.max(2, homeApps.length > 4 ? Math.ceil(homeApps.length / 2) : homeApps.length))));
+  const stage = h('div', 'lx-stage', grid, ...(acts.length ? [h('div', 'lx-ccs', ...actKeys)] : []));
+  box.append(stage, ...(dockN ? [h('div', 'lx-dock', ...dockKeys)] : []));
+  const allApps = [...dockApps, ...homeApps], allKeys = [...dockKeys, ...homeKeys];
+  let running = null, at = 0, busy = false;
+  const draw = () => {
+    const tg = D.state?.toggles || {};
+    acts.forEach((s, i) => {
+      const on = tg[s.id] === true;
+      actKeys[i].classList.toggle('on', on);
+      actKeys[i].querySelector('.lx-state').textContent = /mute/i.test(s.id) ? (on ? 'Muted' : 'Sound on')
+        : s.toggle ? (on ? 'On' : 'Off') : (ACTION_STATE[s.id] || 'Tap to run');
+    });
+    const live = running ? new Map(running.map((a) => [a.bundleId, a])) : null;
+    allApps.forEach((s, i) => {
+      const a = live && s.bundle ? live.get(s.bundle) : null;
+      allKeys[i].classList.toggle('running', !!a);
+      allKeys[i].classList.toggle('front', !!a?.active);
+    });
+  };
+  const load = async () => {
+    if (busy || Date.now() - at < 3000 || !allApps.some((s) => s.bundle)) return;
+    busy = true;
+    try { running = await api('/system/apps'); at = Date.now(); } catch (_) {} finally { busy = false; }
+    draw();
+  };
+  draw();
+  return { update() { draw(); load(); } };
+}
+
 W.shortcuts = {
   needs: ['state'],
   create(box, { o }) {
@@ -1019,12 +1062,22 @@ W.shortcuts = {
       box.append(h('div', 'empty', all.length ? t('w.shortcutsMissing') : t('w.shortcutsWait')));
       return {};
     }
+    // A full-page launcher: apps as a big icon grid that shows which are running, built-in actions (mute, screen off,
+    // lock …) as tall buttons beside it. Smaller slots keep the plain key grid.
+    // (the size is known only once the page is laid out, so the choice is made on the first update)
+    const big = () => box.clientWidth >= 480 && box.clientHeight >= 240 && o.layout !== 'grid';
     const cols = Math.min(8, Math.max(1, o.columns || 4));
     const grid = h('div', 'deck-grid', ...list.map(keyButton));
     grid.style.gridTemplateColumns = `repeat(${Math.min(cols, list.length)}, 1fr)`;
     grid.style.gridTemplateRows = `repeat(${Math.ceil(list.length / cols)}, 1fr)`;
-    box.append(grid);
-    return { update: () => applyToggles(box) };
+    let lx = null;
+    if (big()) lx = launcher(box, list, o); else box.append(grid);
+    return {
+      update() {
+        if (!lx && big()) { grid.remove(); lx = launcher(box, list, o); }
+        if (lx) lx.update(); else applyToggles(box);
+      },
+    };
   },
 };
 
