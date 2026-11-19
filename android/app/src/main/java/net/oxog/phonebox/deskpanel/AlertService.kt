@@ -22,6 +22,7 @@ import java.net.URLEncoder
  *  - a question from Claude, and a session that waits for input;
  *  - a session that finished, with an inline Reply that sends the next prompt to it (POST /api/sessions/prompt).
  * While the panel is on screen it stays quiet: the panel shows all of this itself.
+ * It also feeds the home-screen widgets (Widgets.kt): the Claude status / prompt, and what the computer is playing.
  */
 class AlertService : Service() {
 
@@ -33,6 +34,7 @@ class AlertService : Service() {
     private val shownApprovals = mutableSetOf<String>()
     private val lastStatus = mutableMapOf<String, String>()
     private var lastOngoing = ""
+    private var tick = 0
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -128,12 +130,19 @@ class AlertService : Service() {
             }
             lastStatus.keys.retainAll(seen)
         }
+
+        // ---- home-screen widgets (redrawn only when their content changes); the media one every other poll (~5 s)
+        try {
+            Widgets.pushClaude(this, if (work != null && waiting == 0 && working == 0) getString(R.string.widget_all_quiet) else line,
+                items?.optJSONObject(0))
+            if (tick++ % 2 == 0 && Widgets.has(this, MediaWidget::class.java))
+                Widgets.pushMedia(this, link, get("/api/state")?.optJSONObject("media"))
+        } catch (_: Exception) {}
     }
 
     // ---------------------------------------------------------------- notifications
 
-    private fun openPanel(): PendingIntent = PendingIntent.getActivity(this, 0,
-        Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP), immutable())
+    private fun openPanel(): PendingIntent = openPanel(this)
 
     private fun builder(channel: String): Notification.Builder =
         (if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, channel) else @Suppress("DEPRECATION") Notification.Builder(this))
@@ -205,6 +214,8 @@ class AlertService : Service() {
         fun approvalId(id: String) = 1000 + (id.hashCode() and 0x7ffffff)
         fun sessionId(id: String) = 200_000_000 + (id.hashCode() and 0x7ffffff)
         fun immutable() = PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= 23) PendingIntent.FLAG_IMMUTABLE else 0)
+        fun openPanel(c: Context): PendingIntent = PendingIntent.getActivity(c, 0,
+            Intent(c, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP), immutable())
         fun encode(s: String): String = URLEncoder.encode(s, "UTF-8").replace("+", "%20")
 
         fun createChannels(c: Context) {

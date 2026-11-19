@@ -78,6 +78,26 @@
         </service>
         <receiver android:name=".AlertActionReceiver" android:exported="false" />
 
+        <!-- Home-screen widgets, fed by AlertService (Widgets.kt) -->
+        <receiver
+            android:name=".ClaudeWidget"
+            android:exported="false"
+            android:label="@string/widget_claude_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_claude_info" />
+        </receiver>
+        <receiver
+            android:name=".MediaWidget"
+            android:exported="false"
+            android:label="@string/widget_media_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_media_info" />
+        </receiver>
+
         <!-- Quick Settings tile (Edit tiles › PhoneBox): opens the panel. Tiles exist from Android 7.0; below that the
              service is disabled (values/bools.xml vs values-v24). -->
         <service

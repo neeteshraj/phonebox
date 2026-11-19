@@ -36,4 +36,15 @@
     <string name="alert_ch_status">Connection and activity</string>
     <string name="alert_ch_prompts">Permission prompts and questions</string>
     <string name="alert_ch_sessions">Finished sessions</string>
+    <!-- Home-screen widgets -->
+    <string name="widget_badge_glyph" translatable="false">✳</string>
+    <string name="widget_claude_label">Claude</string>
+    <string name="widget_claude_desc">What Claude Code is doing on your computer, with Allow / Deny for permission prompts</string>
+    <string name="widget_media_label">Now playing</string>
+    <string name="widget_media_desc">What your computer is playing, with play / pause and skip</string>
+    <string name="widget_all_quiet">All quiet</string>
+    <string name="widget_nothing_playing">Nothing playing</string>
+    <string name="widget_prev">Previous</string>
+    <string name="widget_playpause">Play / pause</string>
+    <string name="widget_next">Next</string>
 </resources>
