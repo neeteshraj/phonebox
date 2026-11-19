@@ -36,4 +36,14 @@
     <string name="alert_ch_status">Kết nối và hoạt động</string>
     <string name="alert_ch_prompts">Yêu cầu cấp quyền và câu hỏi</string>
     <string name="alert_ch_sessions">Phiên đã xong</string>
+    <!-- Tiện ích màn hình chính -->
+    <string name="widget_claude_label">Claude</string>
+    <string name="widget_claude_desc">Claude Code đang làm gì trên máy tính, kèm Cho phép / Từ chối cho yêu cầu cấp quyền</string>
+    <string name="widget_media_label">Đang phát</string>
+    <string name="widget_media_desc">Máy tính đang phát gì, kèm phát / tạm dừng và chuyển bài</string>
+    <string name="widget_all_quiet">Mọi thứ yên ắng</string>
+    <string name="widget_nothing_playing">Không có gì đang phát</string>
+    <string name="widget_prev">Bài trước</string>
+    <string name="widget_playpause">Phát / tạm dừng</string>
+    <string name="widget_next">Bài tiếp</string>
 </resources>

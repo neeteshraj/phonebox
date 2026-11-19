@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Now playing widget: behind the artwork -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+    <solid android:color="#FF2B2930" />
+    <corners android:radius="14dp" />
+</shape>
