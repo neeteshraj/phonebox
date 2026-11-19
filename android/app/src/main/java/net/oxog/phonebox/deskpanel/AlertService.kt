@@ -185,7 +185,7 @@ class AlertService : Service() {
 
     private fun finished(sessionKey: String, tool: String, project: String): Notification {
         val reply = RemoteInput.Builder(AlertActionReceiver.KEY_REPLY).setLabel(getString(R.string.alert_reply_hint)).build()
-        val act = Notification.Action.Builder(null, getString(R.string.alert_reply), AlertActionReceiver.reply(this, sessionKey))
+        val act = @Suppress("DEPRECATION") Notification.Action.Builder(0, getString(R.string.alert_reply), AlertActionReceiver.reply(this, sessionKey))
             .addRemoteInput(reply).build()
         return builder(CH_SESSIONS)
             .setContentTitle(getString(R.string.alert_finished, tool))
@@ -203,7 +203,7 @@ class AlertService : Service() {
         .setDefaults(Notification.DEFAULT_ALL)
         .build()
 
-    private fun action(label: Int, pi: PendingIntent) = Notification.Action.Builder(null, getString(label), pi).build()
+    private fun action(label: Int, pi: PendingIntent) = @Suppress("DEPRECATION") Notification.Action.Builder(0, getString(label), pi).build()
 
     companion object {
         const val CH_STATUS = "status"

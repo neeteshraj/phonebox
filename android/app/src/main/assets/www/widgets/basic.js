@@ -1500,9 +1500,10 @@ W.usage = {
     box.append(head, hero, bars, projs);
     let at = 0, busy = false;
     const fmtTok = (n) => n >= 1e9 ? (n / 1e9).toFixed(1) + 'B' : n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'k' : String(n || 0);
-    const usd = (v) => v == null ? '' : '$' + (v >= 100 ? Math.round(v) : v.toFixed(2));
+    const usd = (v) => v == null ? '' : '$' + (v >= 100 ? Math.round(v).toLocaleString('en-US') : v.toFixed(2));
     const draw = (u) => {
-      head.querySelector('.w-sum').textContent = `This week ${fmtTok(u.week?.tokens)} · ${usd(u.week?.costUsd)}${u.costPartial ? '+' : ''}`;
+      // the cost is what these tokens would cost at API prices, not what a Claude plan charges
+      head.querySelector('.w-sum').textContent = `This week ${fmtTok(u.week?.tokens)} · ${usd(u.week?.costUsd)}${u.costPartial ? '+' : ''} at API prices`;
       hero.replaceChildren(h('b', null, fmtTok(u.today?.tokens)), h('span', null, 'tokens today'), h('em', null, usd(u.today?.costUsd)));
       const days = u.daily || [];
       const max = Math.max(1, ...days.map((d) => d.tokens || 0));
