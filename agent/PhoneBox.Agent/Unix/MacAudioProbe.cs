@@ -59,14 +59,17 @@ internal static class MacAudioProbe
         return (Writable(Volume, 0) || Writable(Volume, 1) || Writable(Volume, 2)) && Writable(Mute, 0);
     }
 
-    private static string? DeviceName(uint device)
+    private static string? DeviceName(uint device) => CfString(device, Name);
+
+    /// <summary>A CFString property of an audio object (name 'lnam', UID 'uid ').</summary>
+    private static string? CfString(uint device, uint selector)
     {
-        var address = new Address(Name, Global, 0);
+        var address = new Address(selector, Global, 0);
         uint size = (uint)IntPtr.Size;
         if (GetPointer(device, ref address, 0, 0, ref size, out var cfString) != 0 || cfString == 0) return null;
         try
         {
-            var buffer = new byte[512];
+            var buffer = new byte[1024];
             if (!CFStringGetCString(cfString, buffer, buffer.Length, 0x08000100)) return null;
             var length = Array.IndexOf(buffer, (byte)0);
             return length >= 0 ? Encoding.UTF8.GetString(buffer, 0, length) : null;
@@ -93,6 +96,78 @@ internal static class MacAudioProbe
                 muted is { } m ? m != 0 : null);
         }
         catch { return null; }
+    }
+
+    // ---------- output devices ----------
+
+    private const uint Devices = 0x64657623; // 'dev#'
+    private const uint Streams = 0x73746d23; // 'stm#'
+    private const uint Uid = 0x75696420; // 'uid '
+    private const uint Transport = 0x7472616e; // 'tran'
+    private const uint DefaultSystemOutput = 0x734f7574; // 'sOut'
+
+    [DllImport(CoreAudio, EntryPoint = "AudioObjectGetPropertyDataSize")]
+    private static extern int GetSize(uint id, ref Address address, uint qualifierSize, nint qualifier, out uint size);
+    [DllImport(CoreAudio, EntryPoint = "AudioObjectGetPropertyData")]
+    private static extern int GetArray(uint id, ref Address address, uint qualifierSize, nint qualifier, ref uint size, [Out] uint[] values);
+    [DllImport(CoreAudio, EntryPoint = "AudioObjectSetPropertyData")]
+    private static extern int SetUInt(uint id, ref Address address, uint qualifierSize, nint qualifier, uint size, ref uint value);
+
+    public sealed record OutputDevice(string Id, string Name, string Transport, bool Current);
+
+    /// <summary>The CoreAudio transport type as the phone's names it.</summary>
+    internal static string TransportName(uint fourcc) => fourcc switch
+    {
+        0x626c746e => "builtin",                  // 'bltn'
+        0x75736220 => "usb",                      // 'usb '
+        0x626c7565 or 0x626c6561 => "bluetooth",  // 'blue', 'blea' (LE)
+        0x68646d69 => "hdmi",                     // 'hdmi'
+        0x64707274 => "displayport",              // 'dprt'
+        0x61697270 => "airplay",                  // 'airp'
+        0x76697274 or 0x67727570 => "virtual",    // 'virt', 'grup' (aggregate)
+        _ => "other",
+    };
+
+    /// <summary>Every device with output streams, with its CoreAudio id; the default output marked current.</summary>
+    private static List<(uint Device, OutputDevice Output)> ScanOutputs()
+    {
+        var list = new List<(uint, OutputDevice)>();
+        var address = new Address(Devices, Global, 0);
+        if (GetSize(1, ref address, 0, 0, out var size) != 0 || size == 0) return list;
+        var ids = new uint[size / sizeof(uint)];
+        if (GetArray(1, ref address, 0, 0, ref size, ids) != 0) return list;
+        var current = UInt(1, DefaultOutput, Global, 0);
+        foreach (var id in ids.Take((int)(size / sizeof(uint))))
+        {
+            var streams = new Address(Streams, Output, 0);
+            if (GetSize(id, ref streams, 0, 0, out var bytes) != 0 || bytes == 0) continue;
+            if (CfString(id, Uid) is not { Length: > 0 } uid) continue;
+            list.Add((id, new(uid, DeviceName(id) ?? uid, TransportName(UInt(id, Transport, Global, 0) ?? 0), id == current)));
+        }
+        return list;
+    }
+
+    /// <summary>The output devices; [] off macOS or on failure.</summary>
+    public static IReadOnlyList<OutputDevice> Outputs()
+    {
+        if (!OperatingSystem.IsMacOS()) return [];
+        try { return ScanOutputs().Select(o => o.Output).ToList(); } catch { return []; }
+    }
+
+    /// <summary>Makes the output with this UID the default (and system / alert) output; false when there is none.</summary>
+    public static bool SetDefaultOutput(string uid)
+    {
+        if (!OperatingSystem.IsMacOS()) return false;
+        try
+        {
+            if (ScanOutputs().FirstOrDefault(o => o.Output.Id == uid).Device is not (> 0 and var device)) return false;
+            var output = new Address(DefaultOutput, Global, 0);
+            if (SetUInt(1, ref output, 0, 0, sizeof(uint), ref device) != 0) return false;
+            var system = new Address(DefaultSystemOutput, Global, 0);
+            SetUInt(1, ref system, 0, 0, sizeof(uint), ref device); // best effort: some devices cannot play alerts
+            return true;
+        }
+        catch { return false; }
     }
 
     private static uint _displayDevice;

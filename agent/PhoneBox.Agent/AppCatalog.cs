@@ -169,10 +169,14 @@ public sealed class AppCatalog(ConfigStore config, ILogger<AppCatalog> log)
         return true;
     }
 
-    private static byte[]? MakeIcon(AppEntry app)
+    private static byte[]? MakeIcon(AppEntry app) => MakeIcon(app.Path, 96);
+
+    /// <summary>A PNG of the bundle's icon, <paramref name="size"/> px wide, cached on disk; null when it has none.</summary>
+    internal static byte[]? MakeIcon(string appPath, int size)
     {
+        var px = size.ToString(System.Globalization.CultureInfo.InvariantCulture);
         var dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "phonebox-app-icons");
-        var id = IdOf(app.Path);
+        var id = IdOf(appPath) + (size == 96 ? "" : "-" + px);
         // converters write to names of their own; only a finished PNG is moved (renamed) to the cached name, so a reader
         // never sees a half-written file, now or after a restart
         var tmp = System.IO.Path.Combine(dir, $"{id}.{Guid.NewGuid():N}.tmp.png");
@@ -184,19 +188,19 @@ public sealed class AppCatalog(ConfigStore config, ILogger<AppCatalog> log)
             if (File.Exists(out1)) return File.ReadAllBytes(out1);
 
             // 1) the icon file the bundle names in Info.plist (.icns)
-            var plist = System.IO.Path.Combine(app.Path, "Contents", "Info.plist");
+            var plist = System.IO.Path.Combine(appPath, "Contents", "Info.plist");
             var iconName = File.Exists(plist) ? Run(3000, "/usr/bin/plutil", "-extract", "CFBundleIconFile", "raw", "-o", "-", plist)?.Trim() : null;
             if (!string.IsNullOrEmpty(iconName))
             {
                 if (!iconName.EndsWith(".icns", StringComparison.OrdinalIgnoreCase)) iconName += ".icns";
-                var icns = System.IO.Path.Combine(app.Path, "Contents", "Resources", System.IO.Path.GetFileName(iconName));
-                if (File.Exists(icns) && Run(8000, "/usr/bin/sips", "-s", "format", "png", "--resampleWidth", "96", icns, "--out", tmp) is not null && File.Exists(tmp))
+                var icns = System.IO.Path.Combine(appPath, "Contents", "Resources", System.IO.Path.GetFileName(iconName));
+                if (File.Exists(icns) && Run(8000, "/usr/bin/sips", "-s", "format", "png", "--resampleWidth", px, icns, "--out", tmp) is not null && File.Exists(tmp))
                     return Publish(tmp, out1);
             }
 
             // 2) apps whose icon lives only in an asset catalog: Quick Look renders the bundle's icon
             Directory.CreateDirectory(ql);
-            Run(10_000, "/usr/bin/qlmanage", "-t", "-s", "96", "-o", ql, app.Path);
+            Run(10_000, "/usr/bin/qlmanage", "-t", "-s", px, "-o", ql, appPath);
             if (Directory.EnumerateFiles(ql, "*.png").FirstOrDefault() is { } thumb) return Publish(thumb, out1);
         }
         catch { }

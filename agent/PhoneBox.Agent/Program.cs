@@ -798,6 +798,7 @@ app.MapPost("/api/system/display/focus", (string? id, ControlDeck deck) => Syste
 app.MapPost("/api/system/display/brightness", (string? id, int? value, ControlDeck deck) => SystemControls.Brightness(id, value, deck));
 app.MapPost("/api/system/keyboard", (int? value) => SystemControls.Keyboard(value));
 app.MapPost("/api/system/search", (string? q) => SystemControls.Search(q));
+SystemControls.MapMacRoutes(app); // window switcher, clipboard, power, audio outputs
 
 app.MapGet("/api/quotas", (QuotaMonitor q) => Results.Json(new { providers = q.Snapshot(), overview = q.Overview() }));
 
