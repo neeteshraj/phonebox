@@ -10,7 +10,9 @@ namespace PhoneBox.Agent;
 public sealed record RunItem(string Role, string Text);
 
 /// <param name="Status">running | done | error | cancelled</param>
-public sealed record SessionRunSnapshot(string RunId, string SessionId, string Status, long StartedAt, long? EndedAt, IReadOnlyList<RunItem> Items);
+/// <param name="RealSessionId">For a new session ("new:&lt;runId&gt;"): "claude:&lt;uuid&gt;" once Claude Code reports it.</param>
+public sealed record SessionRunSnapshot(string RunId, string SessionId, string Status, long StartedAt, long? EndedAt, IReadOnlyList<RunItem> Items,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? RealSessionId = null);
 
 /// <summary>
 /// Prompts sent from the phone to a Claude Code / Codex session, run through the CLI's headless resume
@@ -69,6 +71,40 @@ public sealed class SessionPrompts(ConfigStore cfg, SessionMonitor sessions, Pus
         run.Changed(force: true);
         _ = Task.Run(() => ExecuteAsync(run, binary, args, s.Cwd));
         return (200, new { runId = run.RunId });
+    }
+
+    /// <summary>
+    /// A new Claude Code session (<c>claude -p</c>, no --resume) in one of the folders <see cref="ClaudeProjects"/>
+    /// lists: <paramref name="allowed"/> is that check, so the phone can never pick an arbitrary path.
+    /// </summary>
+    public (int Status, object Body) StartNew(string? cwd, string? text, Func<string?, bool> allowed)
+    {
+        if (!cfg.Get().Claude.PhonePrompts) return (403, new { error = "Sending prompts from the phone is turned off in the settings" });
+        if (string.IsNullOrWhiteSpace(text)) return (400, new { error = "the prompt is empty" });
+        if (text.Length > MaxPromptChars) return (400, new { error = $"the prompt is longer than {MaxPromptChars} characters" });
+        if (!allowed(cwd) || !Directory.Exists(cwd)) return (400, new { error = "not a known project folder" });
+        var binary = ResolveBinary("claude", Environment.GetEnvironmentVariable("PATH"), Home, File.Exists);
+        if (binary is null) return (400, new { error = "claude was not found on this PC" });
+
+        Run run;
+        lock (_startLock)
+        {
+            if (_last.Values.Count(r => r.Active) >= MaxActive) return (409, new { error = "busy" });
+            // finished new-session runs are only kept for the phone to read back: the last few are enough
+            foreach (var old in _last.Values.Where(r => !r.Active && r.SessionId.StartsWith("new:")).OrderByDescending(r => r.StartedAt).Skip(10).ToList())
+            {
+                _last.TryRemove(old.SessionId, out _);
+                _byRunId.TryRemove(old.RunId, out _);
+            }
+            var id = ApprovalStore.NewId();
+            run = new Run(id, "new:" + id, "claude", text, Publish);
+            _last[run.SessionId] = run;
+            _byRunId[id] = run;
+        }
+        log.LogInformation("new session run {Run} in {Cwd} started from the phone", run.RunId, cwd);
+        run.Changed(force: true);
+        _ = Task.Run(() => ExecuteAsync(run, binary, ["-p", "--output-format", "stream-json", "--verbose", text], cwd!));
+        return (200, new { runId = run.RunId, sessionId = run.SessionId });
     }
 
     private void Publish(SessionRunSnapshot snap) =>
@@ -156,6 +192,9 @@ public sealed class SessionPrompts(ConfigStore cfg, SessionMonitor sessions, Pus
     internal sealed class Run(string runId, string sessionId, string tool, string prompt, Action<SessionRunSnapshot> publish)
     {
         public string RunId { get; } = runId;
+        public string SessionId { get; } = sessionId;
+        public long StartedAt => _startedAt;
+        private string? _realSessionId;
         private readonly object _lock = new();
         private readonly List<RunItem> _items = [new("user", Clip(prompt))];
         private readonly long _startedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -172,7 +211,7 @@ public sealed class SessionPrompts(ConfigStore cfg, SessionMonitor sessions, Pus
 
         public SessionRunSnapshot Snapshot()
         {
-            lock (_lock) return new(RunId, sessionId, _status, _startedAt, _endedAt, _items.ToList());
+            lock (_lock) return new(RunId, SessionId, _status, _startedAt, _endedAt, _items.ToList(), _realSessionId);
         }
 
         public void Attach(Process p)
@@ -239,6 +278,10 @@ public sealed class SessionPrompts(ConfigStore cfg, SessionMonitor sessions, Pus
                     }
                     _lastMessageId = id;
                     return changed;
+                // a new session learns its id from the init line, so the phone can open the real session later
+                case "system" when SessionId.StartsWith("new:") && _realSessionId is null && Str(r, "session_id") is { Length: > 0 } sid:
+                    _realSessionId = "claude:" + sid;
+                    return true;
                 case "result":
                     _sawResult = true;
                     _resultError = r.TryGetProperty("is_error", out var e) && e.ValueKind == JsonValueKind.True;
