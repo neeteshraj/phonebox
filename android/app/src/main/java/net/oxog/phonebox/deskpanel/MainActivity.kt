@@ -74,6 +74,10 @@ class MainActivity : Activity(), SensorEventListener {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         link = AgentLink(this)
+        // Claude Code notifications while the panel is in the background (Android 13+ asks for the permission once)
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
+            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), NOTIFY_PERMISSION_REQUEST)
+        AlertService.start(this)
         stream = AgentStream(link) { event, data ->
             val js = "window.onAgentStream && window.onAgentStream(${JSONObject.quote(event)}, ${JSONObject.quote(data)})"
             runOnUiThread { if (!destroyed) web.evaluateJavascript(js, null) }
@@ -231,6 +235,7 @@ class MainActivity : Activity(), SensorEventListener {
     override fun onResume() {
         super.onResume()
         resumed = true
+        onScreen = true
         web.onResume()
         stream.start()
         hideSystemUi()
@@ -246,6 +251,7 @@ class MainActivity : Activity(), SensorEventListener {
 
     override fun onPause() {
         resumed = false
+        onScreen = false
         dictation.cancel(0) // the microphone is never left open behind another app or a dark screen
         sensors?.unregisterListener(this)
         stream.stop()
@@ -484,10 +490,13 @@ class MainActivity : Activity(), SensorEventListener {
     }
 
     companion object {
+        /** The panel is in front and the screen is on: AlertService stays quiet then, the panel shows everything. */
+        @Volatile @JvmStatic var onScreen = false
+        private const val NOTIFY_PERMISSION_REQUEST = 7301
         private const val ASSET_HOST = "appassets.androidplatform.net"
         private val NO_STORE = mapOf("Cache-Control" to "no-store")
         private const val PANEL_HEADER = "X-PhoneBox-Panel"
-        private val READ_ONLY_IMAGES = setOf("/agent/api/art", "/agent/api/procs/icon", "/agent/api/controls/radio-logo", "/agent/api/apps/icon", "/agent/api/discord/img", "/agent/api/shortcuts/icon")
+        private val READ_ONLY_IMAGES = setOf("/agent/api/art", "/agent/api/media/art", "/agent/api/procs/icon", "/agent/api/controls/radio-logo", "/agent/api/apps/icon", "/agent/api/discord/img", "/agent/api/shortcuts/icon")
         private fun FORBIDDEN() = WebResourceResponse("text/plain", "utf-8", 403, "Forbidden", NO_STORE, java.io.ByteArrayInputStream(ByteArray(0)))
     }
 }

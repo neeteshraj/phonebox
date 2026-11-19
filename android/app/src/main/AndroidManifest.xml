@@ -6,6 +6,10 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <!-- Dictation widget only: asked for the first time its microphone button is tapped -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Notifications while the panel is not on screen: what Claude Code is doing, permission prompts with Allow / Deny -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 
     <!-- Android 11+: the speech recognizer has to be visible to the app (Dictation widget) -->
     <queries>
@@ -61,6 +65,18 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity-alias>
+
+        <!-- Watches the computer while the panel is in the background and posts Claude Code notifications -->
+        <service
+            android:name=".AlertService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            tools:targetApi="34">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keeps a link to the user's own computer to show its AI coding sessions' permission prompts and activity as notifications" />
+        </service>
+        <receiver android:name=".AlertActionReceiver" android:exported="false" />
 
         <!-- Quick Settings tile (Edit tiles › PhoneBox): opens the panel. Tiles exist from Android 7.0; below that the
              service is disabled (values/bools.xml vs values-v24). -->

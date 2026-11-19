@@ -14,4 +14,26 @@
     <string name="pair_failed_answer">%1$s answered %2$d.</string>
     <string name="pair_failed_certificate">The computer has a different certificate than the QR code. Start pairing again.</string>
     <string name="ok">OK</string>
+    <string name="alert_status_title">PhoneBox</string>
+    <string name="alert_connecting">Connecting to your computer…</string>
+    <string name="alert_connected">Connected to %1$s</string>
+    <string name="alert_offline">%1$s is not reachable</string>
+    <string name="alert_working_one">Claude is working · %1$s</string>
+    <string name="alert_working_many">%1$d sessions are working</string>
+    <string name="alert_waiting_count">%1$d session needs you</string>
+    <string name="alert_allow">Allow</string>
+    <string name="alert_deny">Deny</string>
+    <string name="alert_got_it">Got it</string>
+    <string name="alert_open">Open</string>
+    <string name="alert_reply">Reply</string>
+    <string name="alert_reply_hint">Next prompt…</string>
+    <string name="alert_finished">%1$s finished</string>
+    <string name="alert_needs_input">%1$s needs your input</string>
+    <string name="alert_sent">Sent: %1$s</string>
+    <string name="alert_prompts_off">Turn on “Send prompts to sessions from the phone” in Settings</string>
+    <string name="alert_busy">The session is busy right now</string>
+    <string name="alert_unreachable">Could not reach the computer: open PhoneBox</string>
+    <string name="alert_ch_status">Connection and activity</string>
+    <string name="alert_ch_prompts">Permission prompts and questions</string>
+    <string name="alert_ch_sessions">Finished sessions</string>
 </resources>

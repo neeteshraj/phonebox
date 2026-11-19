@@ -14,4 +14,26 @@
     <string name="pair_failed_answer">%1$s trả lời mã %2$d.</string>
     <string name="pair_failed_certificate">Máy tính này có chứng chỉ khác với mã QR. Hãy bắt đầu ghép nối lại.</string>
     <string name="ok">OK</string>
+    <string name="alert_status_title">PhoneBox</string>
+    <string name="alert_connecting">Đang kết nối với máy tính…</string>
+    <string name="alert_connected">Đã kết nối với %1$s</string>
+    <string name="alert_offline">Không kết nối được với %1$s</string>
+    <string name="alert_working_one">Claude đang làm việc · %1$s</string>
+    <string name="alert_working_many">%1$d phiên đang làm việc</string>
+    <string name="alert_waiting_count">%1$d phiên cần bạn</string>
+    <string name="alert_allow">Cho phép</string>
+    <string name="alert_deny">Từ chối</string>
+    <string name="alert_got_it">Đã hiểu</string>
+    <string name="alert_open">Mở</string>
+    <string name="alert_reply">Trả lời</string>
+    <string name="alert_reply_hint">Yêu cầu tiếp theo…</string>
+    <string name="alert_finished">%1$s đã xong</string>
+    <string name="alert_needs_input">%1$s cần bạn trả lời</string>
+    <string name="alert_sent">Đã gửi: %1$s</string>
+    <string name="alert_prompts_off">Bật “Gửi yêu cầu tới phiên từ điện thoại” trong Cài đặt</string>
+    <string name="alert_busy">Phiên đang bận</string>
+    <string name="alert_unreachable">Không kết nối được với máy tính: hãy mở PhoneBox</string>
+    <string name="alert_ch_status">Kết nối và hoạt động</string>
+    <string name="alert_ch_prompts">Yêu cầu cấp quyền và câu hỏi</string>
+    <string name="alert_ch_sessions">Phiên đã xong</string>
 </resources>
