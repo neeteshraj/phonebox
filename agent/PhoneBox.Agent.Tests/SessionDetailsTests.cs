@@ -150,5 +150,128 @@ public sealed class SessionDetailsTests : IDisposable
         Assert.Equal("recovered-app-1234", s.Name);
     }
 
+    [Fact]
+    public void Cursor_RecentAssistantTurn_IsIdleWithoutExposingMessageText()
+    {
+        var monitor = new SessionMonitor(NullLogger<SessionMonitor>.Instance);
+        var slug = "Users-test-Projects-phonebox";
+        var id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+        var dir = Path.Combine(_root, "projects", slug, "agent-transcripts", id);
+        Directory.CreateDirectory(dir);
+        var file = Path.Combine(dir, id + ".jsonl");
+        File.WriteAllText(file,
+            """{"role":"user","message":"PRIVATE PROMPT"}""" + "\n" +
+            """{"role":"assistant","message":"PRIVATE REPLY"}""" + "\n");
+        File.SetLastWriteTimeUtc(file, DateTime.UtcNow.AddMinutes(-1));
+
+        var ws = Path.Combine(_root, "workspaceStorage", "abc");
+        Directory.CreateDirectory(ws);
+        File.WriteAllText(Path.Combine(ws, "workspace.json"),
+            """{"folder":"file:///Users/test/Projects/phonebox"}""");
+
+        var s = Assert.Single(monitor.ReadCursor(Path.Combine(_root, "projects"), Path.Combine(_root, "workspaceStorage")));
+        Assert.Equal("cursor", s.Tool);
+        Assert.Equal("phonebox", s.Project);
+        Assert.Equal("idle", s.Status); // last role assistant → turn done
+        Assert.Null(s.WaitingFor);
+        Assert.Equal("cursor:" + id, s.Id);
+        Assert.DoesNotContain("PRIVATE", JsonSerializer.Serialize(s));
+    }
+
+    [Fact]
+    public void Cursor_LastUserMessageWithinBusyWindow_IsBusy()
+    {
+        var monitor = new SessionMonitor(NullLogger<SessionMonitor>.Instance);
+        var id = "11111111-2222-3333-4444-555555555555";
+        var dir = Path.Combine(_root, "projects", "my-app", "agent-transcripts", id);
+        Directory.CreateDirectory(dir);
+        var file = Path.Combine(dir, id + ".jsonl");
+        File.WriteAllText(file, """{"role":"user","message":"hi"}""" + "\n");
+        File.SetLastWriteTimeUtc(file, DateTime.UtcNow.AddSeconds(-30));
+
+        var s = Assert.Single(monitor.ReadCursor(Path.Combine(_root, "projects"), Path.Combine(_root, "missing-ws")));
+        Assert.Equal("busy", s.Status); // last role user → agent working on a reply
+        Assert.Null(s.WaitingFor);
+        Assert.Equal("app", s.Project); // fallback from slug segment
+    }
+
+    [Fact]
+    public void Cursor_FinalUserRecordLargerThanTailWindow_IsBusy()
+    {
+        var monitor = new SessionMonitor(NullLogger<SessionMonitor>.Instance);
+        var id = "22222222-3333-4444-5555-666666666666";
+        var dir = Path.Combine(_root, "projects", "big-app", "agent-transcripts", id);
+        Directory.CreateDirectory(dir);
+        var file = Path.Combine(dir, id + ".jsonl");
+        // A short assistant line, then a user record larger than the 8 KiB initial tail window.
+        var huge = new string('x', 12_000);
+        File.WriteAllText(file,
+            """{"role":"assistant","message":"earlier"}""" + "\n" +
+            """{"role":"user","message":""" + "\"" + huge + "\"}\n");
+        File.SetLastWriteTimeUtc(file, DateTime.UtcNow.AddSeconds(-20));
+
+        Assert.Equal("user", SessionMonitor.ReadCursorLastRole(file));
+        var s = Assert.Single(monitor.ReadCursor(Path.Combine(_root, "projects")));
+        Assert.Equal("busy", s.Status);
+        Assert.Null(s.WaitingFor);
+        Assert.DoesNotContain(huge[..32], JsonSerializer.Serialize(s));
+    }
+
+    [Fact]
+    public void Cursor_StaleTranscript_IsIdle()
+    {
+        var monitor = new SessionMonitor(NullLogger<SessionMonitor>.Instance);
+        var id = "99999999-aaaa-bbbb-cccc-dddddddddddd";
+        var dir = Path.Combine(_root, "projects", "demo", "agent-transcripts", id);
+        Directory.CreateDirectory(dir);
+        var file = Path.Combine(dir, id + ".jsonl");
+        File.WriteAllText(file, """{"role":"assistant","message":"done"}""" + "\n");
+        File.SetLastWriteTimeUtc(file, DateTime.UtcNow.AddMinutes(-20));
+
+        var s = Assert.Single(monitor.ReadCursor(Path.Combine(_root, "projects")));
+        Assert.Equal("idle", s.Status);
+        Assert.Null(s.WaitingFor);
+    }
+
+    [Theory]
+    [InlineData("Users-test-Projects-phonebox", "phonebox")]
+    [InlineData("1794465413728", "Cursor")]
+    [InlineData("", "Cursor")]
+    public void Cursor_ProjectFallback_UsesLastSlugSegment(string slug, string expected)
+        => Assert.Equal(expected, SessionMonitor.CursorProjectFallback(slug));
+
+    [Theory]
+    [InlineData("/Users/test/Projects/phonebox", "Users-test-Projects-phonebox")]
+    [InlineData("C:/Users/test/Projects/phonebox-agent", "C-Users-test-Projects-phonebox-agent")]
+    [InlineData(@"C:\Users\test\Projects\phonebox-agent", "C-Users-test-Projects-phonebox-agent")]
+    public void Cursor_ProjectSlug_StripsDriveColon(string path, string expected)
+        => Assert.Equal(expected, SessionMonitor.CursorProjectSlug(path));
+
+    [Fact]
+    public void Cursor_UnchangedTranscript_ReusesCachedLastRole()
+    {
+        var monitor = new SessionMonitor(NullLogger<SessionMonitor>.Instance);
+        var id = "33333333-4444-5555-6666-777777777777";
+        var dir = Path.Combine(_root, "projects", "cache-app", "agent-transcripts", id);
+        Directory.CreateDirectory(dir);
+        var file = Path.Combine(dir, id + ".jsonl");
+        File.WriteAllText(file, """{"role":"user","message":"go"}""" + "\n");
+        File.SetLastWriteTimeUtc(file, DateTime.UtcNow.AddSeconds(-15));
+
+        var projects = Path.Combine(_root, "projects");
+        Assert.Equal("busy", Assert.Single(monitor.ReadCursor(projects)).Status);
+        var fi = new FileInfo(file);
+        Assert.True(monitor.HasCachedCursorRole(file, fi.LastWriteTimeUtc, fi.Length));
+
+        // Unchanged file: cache still matches; status stays busy without needing a re-read of the body.
+        Assert.Equal("busy", Assert.Single(monitor.ReadCursor(projects)).Status);
+        Assert.True(monitor.HasCachedCursorRole(file, fi.LastWriteTimeUtc, fi.Length));
+
+        File.AppendAllText(file, """{"role":"assistant","message":"done"}""" + "\n");
+        File.SetLastWriteTimeUtc(file, DateTime.UtcNow.AddSeconds(-5));
+        Assert.Equal("idle", Assert.Single(monitor.ReadCursor(projects)).Status);
+        fi.Refresh();
+        Assert.True(monitor.HasCachedCursorRole(file, fi.LastWriteTimeUtc, fi.Length));
+    }
     public void Dispose() { if (Directory.Exists(_root)) Directory.Delete(_root, true); }
 }

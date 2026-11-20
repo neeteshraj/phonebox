@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+**Languages**
+- Greek (Ελληνικά): the panel, the settings page, the widget and template catalog, the Android pairing dialogs and a
+  Greek README. Pick it under Settings › General › Language, or let the phone's language choose it (#262,
+  [Vasilispapg](https://github.com/Vasilispapg)).
+
 **Widgets**
 - Trackpad: move, click and scroll the computer's mouse from the phone, with tap to click, two fingers to right-click
   and scroll, hold to drag and an optional edge scroll bar. Mouse control is off until you turn on **Allow controlling
@@ -11,13 +16,31 @@
   and the Forecast widget (#256, [haydn9000](https://github.com/haydn9000)).
 - Quota ring: provider list includes Cursor and Grok (Grok uses its own mark), and offers every provider currently
   reported by CodexBar (#260, [ajaybali9](https://github.com/ajaybali9)).
+- AI sessions: Cursor agent chats from `~/.cursor/projects/*/agent-transcripts` can show alongside Claude Code and Codex
+  (off by default in Settings › General › Cursor sessions). Only the last message's role is kept; chat text is never
+  shown, stored or sent. Project names use the folder basename from Cursor's `workspaceStorage`
+  (#259, [ajaybali9](https://github.com/ajaybali9)).
 
 **Panel**
+- Pomodoro: the Vietnamese example for your own sequence uses the words the timer understands (`25 focus, 5 break`);
+  copied as shown, the translated words were not understood.
 - Clock widget: a new option chooses which AI quota providers its status line shows; clocks saved before it show
   all of them, as before (#225, #228, [Seyamalam](https://github.com/Seyamalam)).
 - The computer switch buttons (overview and Computers widget) and the session details close button draw stroke icons
   instead of an emoji and a text X, so they look the same on older phones (#252,
   [Seyamalam](https://github.com/Seyamalam)).
+- Sessions widget: with many Claude Code chats in one folder every row read the same. Settings › Claude Code › **Show
+  Claude Code chat titles on the phone** (off by default) shows each chat's title, the name you gave it or the one
+  Claude Code wrote, with the folder on the second line. The title is read from the end of the chat's own file on this
+  computer and, with the switch off, is not read or sent at all (#261, [Vasilispapg](https://github.com/Vasilispapg)).
+- Session details show Folder, Status, Started and Last activity in one compact row (two rows on a narrow screen)
+  instead of four lines.
+
+**Settings page**
+- Clearer and calmer: section icons and a highlighted current section and page, long introductions folded to two lines
+  (click to open), larger buttons and switches, hover and keyboard-focus states, a spinner on Save and an "Unsaved
+  changes" label, toasts with a mark that screen readers announce, and Escape closes dialogs. Motion stays off with the
+  system's reduce-motion setting (#264, [Vasilispapg](https://github.com/Vasilispapg)).
 
 ## 0.9.21 — 2026-11-18
 

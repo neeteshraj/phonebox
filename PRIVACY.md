@@ -27,6 +27,17 @@ Last updated: 2026-11-15 (PhoneBox 0.9.6).
   load comes from the GPU usage counters in other processes' `/proc/<pid>/fdinfo` (the counters only, nothing those
   programs draw or compute); processes of other users are read only when Linux allows the agent to read them (normally
   as root or with `CAP_SYS_PTRACE`).
+- **Cursor sessions** (off by default; **Settings › General › Cursor sessions**): while enabled, the agent scans recent
+  `*.jsonl` files under `~/.cursor/projects/*/agent-transcripts` (about every 30 seconds for discovery) and reads a
+  bounded tail of each file to parse the last record's `role` in memory. Only that role and the file times are kept for
+  the panel; chat text is never shown, stored or sent. Project labels use the folder basename from Cursor's
+  `workspaceStorage/*/workspace.json` `folder` URI (cached about a minute), sent to the phone as the session's project
+  name over the same local USB / paired Wi-Fi link as other panel data. Turning the setting off stops the scan.
+- **Claude Code chat titles** (off by default): with Settings › Claude Code › "Show Claude Code chat titles on the
+  phone" on, the sessions widget shows each chat's title, the name you gave it or the one Claude Code wrote, which it
+  often draws from your first prompt. The agent reads only the title records at the end of the chat's file in
+  `~/.claude/projects`, never the prompts, replies or tool arguments, and sends the title only to your phone, like the
+  rest of this list. With the switch off the file is not opened and no title is sent.
 - **Sound for the Spectrum bars widget** (Windows): while an enabled page with the widget is on the phone's screen,
   the agent captures what the default output device plays, analyzes it in memory and sends only 48 loudness levels
   per frame to the phone. Audio is never stored or sent; capture stops a few seconds after the widget leaves the

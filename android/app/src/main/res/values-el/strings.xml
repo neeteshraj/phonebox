@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Greek strings for the native Android shell (the WebView panel has its own dictionary). -->
+    <string name="pair_title">Σύζευξη με υπολογιστή;</string>
+    <string name="pair_message">\"%1$s\" στη διεύθυνση %2$s (θύρα %3$d).\n\nΕλέγξτε ότι το παράθυρο σύζευξης του υπολογιστή εμφανίζει τον κωδικό %4$s.\n\nΣυνεχίστε μόνο αν εσείς ξεκινήσατε τη σύζευξη σε αυτόν τον υπολογιστή.</string>
+    <string name="pair_positive">Σύζευξη</string>
+    <string name="pair_negative">Άκυρο</string>
+    <string name="pair_progress">Σύζευξη με %1$s…</string>
+    <string name="pair_done">Έγινε σύζευξη με %1$s</string>
+    <string name="pair_failed_title">Η σύζευξη απέτυχε</string>
+    <!-- %1$s is the computer's name, %2$s its addresses. -->
+    <string name="pair_failed_unreachable">Δεν ήταν δυνατή η σύνδεση με τον %1$s στη διεύθυνση %2$s. Το τηλέφωνο και ο υπολογιστής πρέπει να βρίσκονται στο ίδιο δίκτυο (ή και τα δύο στο Tailscale) και το τείχος προστασίας του υπολογιστή πρέπει να επιτρέπει το PhoneBox.</string>
+    <string name="pair_failed_code">Ο %1$s δεν αποδέχτηκε τον κωδικό: ισχύει μία φορά και για 5 λεπτά. Ξεκινήστε ξανά τη σύζευξη στον υπολογιστή.</string>
+    <string name="pair_failed_answer">Ο %1$s απάντησε %2$d.</string>
+    <string name="pair_failed_certificate">Ο υπολογιστής έχει διαφορετικό πιστοποιητικό από τον κωδικό QR. Ξεκινήστε ξανά τη σύζευξη.</string>
+    <string name="ok">OK</string>
+    <string name="alert_status_title">PhoneBox</string>
+    <string name="alert_connecting">Σύνδεση με τον υπολογιστή σου…</string>
+    <string name="alert_connected">Συνδέθηκε με %1$s</string>
+    <string name="alert_offline">Δεν υπάρχει πρόσβαση στο %1$s</string>
+    <string name="alert_working_one">Το Claude δουλεύει · %1$s</string>
+    <string name="alert_working_many">%1$d συνεδρίες δουλεύουν</string>
+    <string name="alert_waiting_count">%1$d συνεδρία σε χρειάζεται</string>
+    <string name="alert_allow">Να επιτραπεί</string>
+    <string name="alert_deny">Άρνηση</string>
+    <string name="alert_got_it">Εντάξει</string>
+    <string name="alert_open">Άνοιγμα</string>
+    <string name="alert_reply">Απάντηση</string>
+    <string name="alert_reply_hint">Επόμενο αίτημα…</string>
+    <string name="alert_finished">Το %1$s τελείωσε</string>
+    <string name="alert_needs_input">Το %1$s χρειάζεται απάντηση</string>
+    <string name="alert_sent">Στάλθηκε: %1$s</string>
+    <string name="alert_prompts_off">Ενεργοποίησε το «Αποστολή αιτημάτων στις συνεδρίες από το τηλέφωνο» στις Ρυθμίσεις</string>
+    <string name="alert_busy">Η συνεδρία είναι απασχολημένη τώρα</string>
+    <string name="alert_unreachable">Δεν υπάρχει πρόσβαση στον υπολογιστή: άνοιξε το PhoneBox</string>
+    <string name="alert_ch_status">Σύνδεση και δραστηριότητα</string>
+    <string name="alert_ch_prompts">Αιτήματα άδειας και ερωτήσεις</string>
+    <string name="alert_ch_sessions">Ολοκληρωμένες συνεδρίες</string>
+    <string name="widget_claude_label">Claude</string>
+    <string name="widget_claude_desc">Τι κάνει το Claude Code στον υπολογιστή σου, με Να επιτραπεί / Άρνηση για τα αιτήματα άδειας</string>
+    <string name="widget_media_label">Αναπαραγωγή τώρα</string>
+    <string name="widget_media_desc">Τι παίζει ο υπολογιστής σου, με αναπαραγωγή / παύση και μεταπήδηση</string>
+    <string name="widget_all_quiet">Όλα ήσυχα</string>
+    <string name="widget_nothing_playing">Δεν παίζει τίποτα</string>
+    <string name="widget_prev">Προηγούμενο</string>
+    <string name="widget_playpause">Αναπαραγωγή / παύση</string>
+    <string name="widget_next">Επόμενο</string>
+</resources>

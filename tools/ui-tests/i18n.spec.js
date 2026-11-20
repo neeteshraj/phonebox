@@ -60,7 +60,7 @@ test('the breathe widget greets in the panel language before the first tap', asy
   await expect(page.locator('.br-w')).toHaveText('Tippen zum Starten');
 });
 
-// Panel keys are translated in all twelve languages and are checked strictly. Settings-page strings were added for
+// Panel keys are translated in all thirteen languages and are checked strictly. Settings-page strings were added for
 // English and Vietnamese only: t() falls back to the English entry for a key a language does not define, so a missing
 // s.* key never shows a key name. The languages that do define a key must not carry English text in its place, which is
 // the failure mode a plain "every key exists" check cannot see.
@@ -70,7 +70,7 @@ test('every translated key is really translated, and the rest fall back to Engli
     const I18n = window.PhoneBoxI18n;
     const S = I18n.STRINGS;
     const en = S.en;
-    // Panel keys (everything outside s.*) are the strings the phone shows, and they are translated in all twelve
+    // Panel keys (everything outside s.*) are the strings the phone shows, and they are translated in all thirteen
     // languages, so a missing one is a regression. Settings-page keys (s.*) were added for English and Vietnamese only
     // and are allowed to fall back; every other gap is a failure.
     const gaps = Object.keys(S).flatMap((lang) =>
@@ -104,6 +104,28 @@ test('the Vietnamese panel dictionary is complete', async ({ page }) => {
     return Object.keys(S.en).filter((k) => !(k in S.vi));
   });
   expect(gaps).toEqual([]);
+});
+
+test('the Greek dictionary and widget catalog are complete', async ({ page }) => {
+  await page.goto('/panel/');
+  const out = await page.evaluate(async () => {
+    const I18n = window.PhoneBoxI18n;
+    const S = I18n.STRINGS;
+    const missing = Object.keys(S.en).filter((k) => !(k in S.el));
+    I18n.setLang('el');
+    return {
+      missing,
+      locale: I18n.getLocale(),
+      add: I18n.t('s.js.addWidget'),
+      name: I18n.tc('Clock'),
+      category: I18n.tc('Weather & sky'),
+    };
+  });
+  expect(out.missing).toEqual([]);
+  expect(out.locale).toBe('el-GR');
+  expect(out.add).not.toBe('Add a widget');
+  expect(out.name).toMatch(/[\u0370-\u03ff]/);
+  expect(out.category).toMatch(/[\u0370-\u03ff]/);
 });
 
 test('the widget catalog translates by its English text', async ({ page }) => {
@@ -156,7 +178,7 @@ test('i18n.js defines every key once per language', () => {
     if (seen.has(key)) dupes.push(`${block} ${k[1]} (lines ${seen.get(key)} and ${i + 1})`);
     else seen.set(key, i + 1);
   });
-  expect(spaces.size).toBeGreaterThanOrEqual(13); // the parser still finds the language blocks (12 languages + catalog)
+  expect(spaces.size).toBeGreaterThanOrEqual(14); // the parser still finds the language blocks (13 languages + catalog)
   expect(dupes).toEqual([]);
 });
 

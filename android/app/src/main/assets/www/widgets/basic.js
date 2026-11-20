@@ -833,21 +833,26 @@ W.sessions = {
     const tokens = (n) => n == null ? '—' : n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : String(n);
     const statusText = (s) => s.status === 'busy' ? t('sess.working') : s.status === 'waiting' ? t('sess.waiting') : s.status === 'shell' ? t('sess.shell') : s.outcome === 'completed' ? t('sess.completed') : s.outcome === 'aborted' ? t('sess.aborted') : t('sess.idle');
     const ageText = (since) => Date.now() - since < 60_000 ? 'just now' : shortDur(Date.now() - since) + ' ago';
+    // A Claude Code chat's title (the agent sends it only when Settings › Claude Code › "Show session titles on the phone"
+    // is on) is the main label and the folder goes under it; without a title the folder is the label, as before.
+    const titleOf = (s) => s.title || s.project || s.name;
+    const folderOf = (s) => (s.title ? s.project : '');
     const openDetails = (s) => {
       haptic();
       const backdrop = h('div', 'session-backdrop');
       const panel = h('div', 'session-panel');
       panel.setAttribute('role', 'dialog');
       panel.setAttribute('aria-modal', 'true');
-      const title = h('h2', null, s.project || s.name);
+      const title = h('h2', null, titleOf(s));
       const close = h('button', 'session-close', icon('x'));
       close.setAttribute('aria-label', 'Close session details');
       const onKey = (e) => { if (e.key === 'Escape') dismiss(); };
       const dismiss = () => { backdrop.remove(); document.removeEventListener('keydown', onKey); panel._cleanup?.(); };
       close.addEventListener('click', dismiss);
       backdrop.addEventListener('click', (e) => { if (e.target === backdrop) dismiss(); });
-      panel.append(h('div', 'session-panel-head', h('span', null, s.tool === 'codex' ? '◎ Codex' : '✳ Claude Code'), close), title);
+      panel.append(h('div', 'session-panel-head', h('span', null, s.tool === 'codex' ? '◎ Codex' : s.tool === 'cursor' ? '◆ Cursor' : '✳ Claude Code'), close), title);
       const rows = [
+        ['Folder', folderOf(s) || null],
         ['Status', statusText(s)],
         ['Started', s.startedAt ? ageText(s.startedAt) : null],
         ['Last activity', s.since ? ageText(s.since) : null],
@@ -860,9 +865,11 @@ W.sessions = {
         ['Last input / context window', s.lastInputTokens != null && s.contextWindow ? `${tokens(s.lastInputTokens)} / ${tokens(s.contextWindow)}` : null],
         ['Recent tool', s.lastTool],
       ];
-      // the facts fold away under a summary line, so the conversation gets the room
-      const facts = h('details', 'session-facts', h('summary', null, [statusText(s), s.model].filter(Boolean).join(' · ') || 'Details'));
-      for (const [label, value] of rows) if (value != null) facts.append(h('div', 'session-detail-row', h('span', null, label), h('strong', null, value)));
+      // the facts: a small label over each value, four to a row, folded away under a summary line so the
+      // conversation gets the room
+      const facts = h('details', 'session-facts', h('summary', null, [statusText(s), s.model].filter(Boolean).join(' · ') || 'Details'),
+        h('div', 'session-grid', rows.filter(([, value]) => value != null)
+          .map(([label, value]) => h('div', 'session-cell', h('span', null, label), h('strong', null, value)))));
       if (s.tool === 'codex') facts.append(h('p', 'session-note', 'Token totals are for this local session, not your account allowance.'));
       panel.append(facts);
       panel.classList.add('has-chat');
@@ -888,8 +895,8 @@ W.sessions = {
         const sorted = [...sessions].sort((a, b) => (S_ORDER[a.status] ?? 9) - (S_ORDER[b.status] ?? 9) || b.since - a.since);
         const rows = sorted.length ? sorted.map((s) => {
           const row = h('button', 'sess ' + s.status,
-            h('span', 'st'), h('span', 'tl ' + s.tool, s.tool === 'claude' ? '✳' : '◎', h('i', 'tl-st')),
-            h('span', 'sess-main', h('span', 'nm', s.project || s.name), h('span', 'sess-meta', [s.model, s.effort].filter(Boolean).join(' · ') || statusText(s))),
+            h('span', 'st'), h('span', 'tl ' + s.tool, s.tool === 'claude' ? '✳' : s.tool === 'cursor' ? '◆' : '◎', h('i', 'tl-st')),
+            h('span', 'sess-main', h('span', 'nm', titleOf(s)), h('span', 'sess-meta', [folderOf(s), [s.model, s.effort].filter(Boolean).join(' · ') || statusText(s)].filter(Boolean).join(' · '))),
             h('span', 'ds', shortDur(Date.now() - s.since)));
           row.type = 'button';
           row.addEventListener('click', () => openDetails(s));

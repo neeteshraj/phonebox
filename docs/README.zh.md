@@ -13,6 +13,7 @@
   <a href="README.nl.md">Nederlands</a> ·
   <a href="README.pl.md">Polski</a> ·
   <a href="README.ru.md">Русский</a> ·
+  <a href="README.el.md">Ελληνικά</a> ·
   <a href="README.vi.md">Tiếng Việt</a> ·
   <b>中文 (简体)</b>
 </p>

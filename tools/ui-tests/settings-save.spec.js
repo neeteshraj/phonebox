@@ -76,3 +76,43 @@ test('a partial settings load and repeated Revert leave the form clean', async (
   await expect(page.locator('#displayLangSel')).toHaveValue('en');
   await expect(save).toBeDisabled();
 });
+
+test('pressing Save twice while a save runs sends one request and keeps the busy state until it ends', async ({ page }) => {
+  await editTheme(page);
+  const outcome = await page.evaluate(async () => {
+    const original = window.fetch;
+    let puts = 0;
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    window.fetch = async (url, options) => {
+      if (String(url) !== '/api/settings' || options?.method !== 'PUT') return original(url, options);
+      puts++;
+      await gate;
+      return Response.json({ error: 'Settings changed elsewhere' }, { status: 409 });
+    };
+    const btn = document.getElementById('save');
+    try {
+      const first = btn.onclick();
+      const second = btn.onclick();
+      const busyWhileRunning = btn.classList.contains('busy');
+      release();
+      const results = await Promise.all([first, second]);
+      return { puts, busyWhileRunning, busyAfter: btn.classList.contains('busy'), results };
+    } finally {
+      window.fetch = original;
+    }
+  });
+  expect(outcome).toEqual({ puts: 1, busyWhileRunning: true, busyAfter: false, results: [false, false] });
+});
+
+test('a section introduction is measured again after the language changes', async ({ page }) => {
+  await page.goto('/settings/#pages');
+  const lead = page.locator('#pages > .lead');
+  await expect(lead).toHaveClass(/\blong\b/);
+  // a short text marks it as not expandable; switching the language puts the full text back
+  await lead.evaluate(el => { el.textContent = 'Short.'; fitLeads(); });
+  await expect(lead).not.toHaveClass(/\blong\b/);
+  await page.evaluate(() => applyLanguageUi('en'));
+  await expect(lead).toHaveClass(/\blong\b/);
+  await expect(lead).toHaveAttribute('role', 'button');
+});

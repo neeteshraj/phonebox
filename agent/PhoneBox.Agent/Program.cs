@@ -643,7 +643,7 @@ app.MapGet("/api/stream", async (HttpContext ctx, PushStore push, SessionMonitor
                 await Send("state", State(ctx.RequestServices, null));
                 if (tick++ % 2 == 0)
                 {
-                    var work = new { sessions = sessions.Snapshot(), github = gh.Snapshot() };
+                    var work = WorkFeed.Build(sessions, gh);
                     var json = JsonSerializer.Serialize(work, opts);
                     if (json != lastWork) { lastWork = json; await Send("work", work); }
                 }
@@ -802,11 +802,7 @@ SystemControls.MapMacRoutes(app); // window switcher, clipboard, power, audio ou
 
 app.MapGet("/api/quotas", (QuotaMonitor q) => Results.Json(new { providers = q.Snapshot(), overview = q.Overview() }));
 
-app.MapGet("/api/work", (SessionMonitor s, GitHubMonitor gh) => Results.Json(new
-{
-    sessions = s.Snapshot(),
-    github = gh.Snapshot(),
-}));
+app.MapGet("/api/work", (SessionMonitor s, GitHubMonitor gh) => Results.Json(WorkFeed.Build(s, gh)));
 
 app.MapGet("/api/proxy", (string? url, CancellationToken ct) => WidgetFeedProxy.FetchAsync(url, ct));
 

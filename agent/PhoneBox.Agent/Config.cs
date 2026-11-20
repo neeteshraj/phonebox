@@ -19,6 +19,8 @@ public sealed class AgentConfig
     public LanConfig Lan { get; set; } = new();
     public UpdateConfig Updates { get; set; } = new();
     public ClaudeConfig Claude { get; set; } = new();
+    /// <summary>Cursor agent-transcript sessions on the AI sessions widget (off by default).</summary>
+    public CursorConfig Cursor { get; set; } = new();
     public List<PageConfig> Pages { get; set; } = [];
     public List<Shortcut> Shortcuts { get; set; } = [];
     public List<RuleConfig> Rules { get; set; } = [];
@@ -133,10 +135,10 @@ public sealed class NightConfig
 public sealed class DisplayConfig
 {
     public AppearanceConfig? Appearance { get; set; }
-    /// <summary>UI language code ("auto", "en", "tr", "de", "fr", "es", "it", "pt", "nl", "pl", "ru", "vi", "zh").</summary>
+    /// <summary>UI language code ("auto", "en", "tr", "de", "fr", "es", "it", "pt", "nl", "pl", "ru", "el", "vi", "zh").</summary>
     public string Language { get; set; } = "auto";
     /// <summary>The codes the panel and the settings page are translated into (i18n.js).</summary>
-    internal static readonly string[] Languages = ["auto", "en", "tr", "de", "fr", "es", "it", "pt", "nl", "pl", "ru", "vi", "zh"];
+    internal static readonly string[] Languages = ["auto", "en", "tr", "de", "fr", "es", "it", "pt", "nl", "pl", "ru", "el", "vi", "zh"];
     public bool ShowSeconds { get; set; } = true;
     /// <summary>false ("14:05", default), true ("2:05 PM") or "auto" (follow the phone).</summary>
     [JsonConverter(typeof(Hour12JsonConverter))]
@@ -216,6 +218,15 @@ public sealed class ClaudeConfig
     public bool OnlyWhenAway { get; set; }
     /// <summary>Let the phone send a prompt to a Claude Code / Codex session (runs the CLI's headless resume, see SessionPrompts).</summary>
     public bool PhonePrompts { get; set; }
+    /// <summary>Show each Claude Code chat's title on the phone. The title is the name you gave the chat or the one
+    /// Claude Code wrote, which it often draws from your first prompt, so it stays off until you turn it on.</summary>
+    public bool ShareSessionTitles { get; set; }
+}
+
+public sealed class CursorConfig
+{
+    /// <summary>Show recent Cursor agent chats on the AI sessions widget (off by default).</summary>
+    public bool Sessions { get; set; }
 }
 
 public sealed class PageConfig
@@ -541,6 +552,7 @@ public sealed partial class ConfigStore(string path)
         if (c.Ping.Host.Length > 253 || c.Ping.Host.Any(ch => ch <= ' ' || ch > '~')) c.Ping.Host = PingMonitor.DefaultHost;
         c.Claude ??= new();
         c.Claude.TimeoutSec = Math.Clamp(c.Claude.TimeoutSec, 10, 3600);
+        c.Cursor ??= new();
         if (string.IsNullOrWhiteSpace(c.Updates.Repo)) c.Updates.Repo = "ersinkoc/phonebox";
         c.Lan.Port = Math.Clamp(c.Lan.Port, 1024, 65535);
         if (string.IsNullOrWhiteSpace(c.Lan.Token)) c.Lan.Token = NewToken();

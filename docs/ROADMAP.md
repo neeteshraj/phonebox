@@ -27,6 +27,8 @@ people who proposed or prototyped something are credited in the [changelog](../C
   [#254](https://github.com/ersinkoc/phonebox/pull/254)).
 - **Voice commands**: say what you want and a language model of your choice (local through Ollama, or a hosted one)
   picks from the shortcuts you allowed; opt-in, off by default ([#257](https://github.com/ersinkoc/phonebox/issues/257)).
+- **Pomodoro: an optional sound when a step ends**, off by default and silent in night mode
+  ([#267](https://github.com/ersinkoc/phonebox/issues/267)).
 - **Steam friends and activity widgets** (pull request [#244](https://github.com/ersinkoc/phonebox/pull/244)): waiting
   for an issue to agree on the scope, and a rebase.
 

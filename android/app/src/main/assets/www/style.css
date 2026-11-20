@@ -475,6 +475,7 @@ body.offline .offline-msg { display: flex; }
 .sess .tl.claude { color: #d97757; }
 .sess .tl.codex { color: #e5e7eb; }
 .sess .tl-st { display: none; }
+.sess .tl.cursor { color: #67e8f9; }
 .sess-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .sess .nm { min-width: 0; font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sess-meta { font-size: 10px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -496,12 +497,17 @@ body.offline .offline-msg { display: flex; }
 .sheet-grab { position: sticky; top: 0; z-index: 2; height: 20px; margin: 0 -22px; background: inherit; touch-action: none; }
 .sheet-grab::before { content: ""; position: absolute; top: 8px; left: 50%; width: 36px; height: 4px; margin-left: -18px; border-radius: 2px; background: rgba(255, 255, 255, .22); }
 .session-panel-head { position: sticky; top: 20px; z-index: 1; display: flex; align-items: center; justify-content: space-between; padding: 2px 0 6px; background: #161a22; color: var(--muted); font-size: 13px; touch-action: none; }
-.session-panel h2 { margin: 4px 0 14px; font-size: 22px; font-weight: 600; overflow-wrap: anywhere; touch-action: none; }
+.session-panel h2 { margin: 4px 0 14px; font-size: 22px; font-weight: 600; overflow-wrap: anywhere; touch-action: none; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .session-close { border: 0; background: transparent; color: var(--text); font-size: 20px; padding: 2px 8px; cursor: pointer; }
 .session-detail-row { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; border-top: 1px solid var(--line); font-size: 12px; }
 .session-detail-row span { color: var(--muted); }
 .session-detail-row strong { font-weight: 600; text-align: right; overflow-wrap: anywhere; }
 .session-note { margin: 12px 0 0; color: var(--dim); font-size: 11px; }
+.session-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); overflow: hidden; border: 1px solid var(--line); border-radius: 10px; }
+.session-cell { min-width: 0; padding: 6px 9px; box-shadow: 0 0 0 .5px var(--line); }
+.session-cell span { display: block; color: var(--muted); font-size: 9px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.session-cell strong { display: block; margin-top: 1px; font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
+@media (max-width: 420px) { .session-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .gh-bell { font-size: 11.5px; padding: 2px 8px; border-radius: 8px; background: rgba(255, 255, 255, .08); white-space: nowrap; }
 .gh-sec { display: flex; justify-content: space-between; font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin: 3px 0; font-weight: 600; }
 .gh-sec b { color: var(--text); }

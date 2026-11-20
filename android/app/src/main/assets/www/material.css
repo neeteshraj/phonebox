@@ -479,3 +479,4 @@ body[data-theme="material"] .w-shortcuts.lx.card { background:
     radial-gradient(60% 80% at 92% 18%, rgba(129, 92, 246, .55), transparent 62%),
     radial-gradient(80% 80% at 60% 110%, rgba(236, 72, 153, .38), transparent 60%),
     linear-gradient(160deg, #101827, #0b0d14); }
+body[data-theme="material"] .sess .tl.cursor { background: #164e63; color: #a5f3fc; }
