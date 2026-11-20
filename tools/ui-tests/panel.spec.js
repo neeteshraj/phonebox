@@ -659,3 +659,21 @@ test('Mac controls and Claude usage cards render their data and act', async ({ p
   await expect(page.locator('.us-bar')).toHaveCount(7);
   await expect(page.locator('.us-proj').first()).toContainText('api-gateway');
 });
+
+test('the remote desktop shows the screen and turns taps, long presses and keys into input', async ({ page }) => {
+  await page.goto('/panel/');
+  await page.evaluate(() => {
+    const cfg = JSON.parse(localStorage.getItem('pb-demo-config') || '{}');
+    localStorage.setItem('pb-demo-config', JSON.stringify({ ...cfg, night: { enabled: false },
+      pages: [{ id: 'r', title: 'Remote', enabled: true, widgets: [{ id: 'r', type: 'remote', x: 0, y: 0, w: 12, h: 6, options: {} }] }] }));
+  });
+  await page.reload();
+  await expect(page.locator('.rm-screen')).toHaveAttribute('src', /^blob:/);
+  await expect(page.locator('.rm-scr')).toHaveCount(2);
+  const st = await page.locator('.rm-stage').boundingBox();
+  await page.mouse.click(st.x + st.width / 2, st.y + st.height / 2);
+  await page.locator('.rm-btn[aria-label="Special keys"]').click();
+  await page.locator('.rm-key', { hasText: '⌘C' }).click();
+  await expect.poll(() => page.evaluate(() => window.PhoneBoxDemo.remoteInput.map((e) => e.type + (e.key ? ':' + e.key + ':' + e.mods : '')).join(' '))).toContain('click');
+  await expect.poll(() => page.evaluate(() => window.PhoneBoxDemo.remoteInput.map((e) => e.type + (e.key ? ':' + e.key + ':' + e.mods : '')).join(' '))).toContain('key:c:cmd');
+});

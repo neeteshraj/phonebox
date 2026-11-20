@@ -1269,3 +1269,225 @@ W.mac = {
     return { update: load };
   },
 };
+
+// ---------------------------------------------------------------- Remote desktop
+// The Mac's screen, live, and touch control: tap = click, double tap = double click, long press = right click,
+// one-finger drag = drag (pans instead while zoomed in), two-finger drag = scroll, pinch = zoom the view.
+// Frames come from GET /api/remote/frame (newest JPEG, ?since= waits for a new one); input goes to POST /api/remote/input.
+W.remote = {
+  needs: ['state'],
+  create(box, { o }) {
+    box.classList.add('rm');
+    const stage = h('div', 'rm-stage');
+    const img = document.createElement('img');
+    img.className = 'rm-screen'; img.alt = '';
+    const msg = h('div', 'rm-msg');
+    const ring = h('i', 'rm-tap');
+    stage.append(img, ring, msg);
+    const kbd = document.createElement('input');
+    kbd.className = 'rm-kbd'; kbd.autocapitalize = 'off'; kbd.autocomplete = 'off'; kbd.spellcheck = false; kbd.setAttribute('aria-label', 'Type on the Mac');
+    const screens = h('div', 'rm-screens');
+    const btn = (glyph, label, fn, cls = '') => { const b = h('button', 'rm-btn ' + cls, icon(glyph)); b.type = 'button'; b.setAttribute('aria-label', label); b.title = label; b.addEventListener('click', (e) => { e.stopPropagation(); haptic(); fn(b); }); return b; };
+    const fps = h('span', 'rm-fps');
+    const keysRow = h('div', 'rm-keys');
+    const KEYS = [['Esc', 'esc'], ['Tab', 'tab'], ['⌘Tab', 'tab', 'cmd'], ['←', 'left'], ['↑', 'up'], ['↓', 'down'], ['→', 'right'], ['⌫', 'backspace'], ['↵', 'enter'],
+      ['⌘C', 'c', 'cmd'], ['⌘V', 'v', 'cmd'], ['⌘Z', 'z', 'cmd'], ['⌘A', 'a', 'cmd'], ['⌘Space', 'space', 'cmd']];
+    keysRow.append(...KEYS.map(([label, key, mods]) => {
+      const b = h('button', 'rm-key', label); b.type = 'button';
+      b.addEventListener('click', (e) => { e.stopPropagation(); haptic(); input({ type: 'key', key, mods: mods || '' }); });
+      return b;
+    }));
+    keysRow.hidden = true;
+    let hd = o.quality !== 'sd';
+    const bar = h('div', 'rm-bar', screens,
+      btn('keyboard', 'Keyboard', () => { kbd.focus(); }),
+      btn('command', 'Special keys', (b) => { keysRow.hidden = !keysRow.hidden; b.classList.toggle('on', !keysRow.hidden); }),
+      btn('hd', 'Quality', (b) => { hd = !hd; b.classList.toggle('on', hd); since = 0; }, 'on'),
+      btn('expand', 'Full screen', (b) => { box.classList.toggle('rm-full'); document.body.classList.toggle('rm-fullscreen', box.classList.contains('rm-full')); b.classList.toggle('on'); fit(); }),
+      fps);
+    box.append(stage, keysRow, bar, kbd);
+
+    // ---- state
+    let info = null, display = null, since = 0, running = false, visible = false, frames = 0, fpsAt = performance.now(), lastUrl = '';
+    let zoom = 1, panX = 0, panY = 0;
+    const say = (text, hint = '') => { msg.replaceChildren(...(text ? [h('b', null, text), hint ? h('span', null, hint) : ''] : [])); msg.hidden = !text; };
+    const post = (q) => fetch(`${API}/remote/input?${q}`, { method: 'POST', headers: PANEL_HEADERS }).then(async (r) => {
+      if (r.status === 403) { const j = await r.json().catch(() => ({})); toast(j.error || 'Not allowed', 'warn'); }
+    }).catch(() => {});
+    const input = (p) => post(new URLSearchParams({ display: display?.id || '', ...Object.fromEntries(Object.entries(p).map(([k, v]) => [k, String(v)])) }).toString());
+
+    // ---- frames
+    const loop = async () => {
+      if (running) return;
+      running = true;
+      while (visible && display) {
+        const w = Math.min(2560, Math.round(stage.clientWidth * (window.devicePixelRatio || 1) * (hd ? 1 : 0.6)));
+        try {
+          const r = await fetch(`${API}/remote/frame?display=${encodeURIComponent(display.id)}&w=${Math.max(320, w)}&q=${hd ? 70 : 45}&since=${since}`, { headers: PANEL_HEADERS, cache: 'no-store' });
+          if (r.status === 200) {
+            since = +(r.headers.get('X-Frame-Seq') || since + 1);
+            const url = URL.createObjectURL(await r.blob());
+            const old = lastUrl; lastUrl = url;
+            img.onload = () => { if (old) URL.revokeObjectURL(old); fit(); say(''); };
+            img.src = url;
+            frames++;
+          } else if (r.status === 304) { /* nothing new */ }
+          else {
+            const j = await r.json().catch(() => ({}));
+            say(r.status === 403 ? 'Remote desktop is off' : r.status === 409 ? 'PhoneBox may not see the screen yet' : 'No picture',
+              r.status === 403 ? 'Turn it on in the computer’s PhoneBox Settings.' : r.status === 409 ? 'Allow PhoneBoxAgent in System Settings › Privacy & Security › Screen Recording, then restart PhoneBox.' : (j.error || ''));
+            await new Promise((ok) => setTimeout(ok, 1500));
+          }
+        } catch (_) { say('Connecting…'); await new Promise((ok) => setTimeout(ok, 1000)); }
+        const now = performance.now();
+        if (now - fpsAt > 1000) { fps.textContent = `${Math.round((frames * 1000) / (now - fpsAt))} fps`; frames = 0; fpsAt = now; }
+      }
+      running = false;
+    };
+    new IntersectionObserver(([e]) => { visible = e.isIntersecting && e.intersectionRatio > 0.6; if (visible) loop(); }, { threshold: [0, 0.6, 1] }).observe(box);
+
+    // ---- where the picture sits (contain, then the zoom and pan)
+    const rect = () => {
+      const sw = stage.clientWidth, sh = stage.clientHeight, iw = img.naturalWidth || 16, ih = img.naturalHeight || 9;
+      const s = Math.min(sw / iw, sh / ih), w = iw * s * zoom, hgt = ih * s * zoom;
+      return { x: (sw - w) / 2 + panX, y: (sh - hgt) / 2 + panY, w, h: hgt };
+    };
+    const fit = () => {
+      const r = rect();
+      img.style.width = r.w + 'px'; img.style.height = r.h + 'px'; img.style.transform = `translate(${r.x}px, ${r.y}px)`;
+    };
+    const clampPan = () => {
+      const sw = stage.clientWidth, sh = stage.clientHeight, r0 = (() => { const z = zoom; zoom = 1; const p = [panX, panY]; panX = panY = 0; const r = rect(); zoom = z; [panX, panY] = p; return r; })();
+      const maxX = Math.max(0, (r0.w * zoom - sw) / 2), maxY = Math.max(0, (r0.h * zoom - sh) / 2);
+      panX = Math.max(-maxX, Math.min(maxX, panX)); panY = Math.max(-maxY, Math.min(maxY, panY));
+    };
+    const norm = (cx, cy) => {
+      const b = stage.getBoundingClientRect(), r = rect();
+      const x = (cx - b.left - r.x) / r.w, y = (cy - b.top - r.y) / r.h;
+      return x < 0 || y < 0 || x > 1 || y > 1 ? null : { x: +x.toFixed(4), y: +y.toFixed(4) };
+    };
+    const showTap = (cx, cy, cls) => {
+      const b = stage.getBoundingClientRect();
+      ring.style.left = cx - b.left + 'px'; ring.style.top = cy - b.top + 'px';
+      ring.className = 'rm-tap'; void ring.offsetWidth; ring.className = 'rm-tap go ' + (cls || '');
+    };
+    new ResizeObserver(fit).observe(stage);
+
+    // ---- gestures
+    const pts = new Map();
+    let mode = null, start = null, pressTimer = 0, lastTap = null, tapTimer = 0, moveAt = 0, pinch0 = null, scrollY0 = 0, scrollX0 = 0;
+    stage.addEventListener('pointerdown', (e) => {
+      stage.setPointerCapture(e.pointerId);
+      pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pts.size === 1) {
+        mode = 'pending'; start = { x: e.clientX, y: e.clientY, t: e.timeStamp };
+        clearTimeout(pressTimer);
+        pressTimer = setTimeout(() => {
+          if (mode !== 'pending') return;
+          mode = 'done';
+          const p = norm(start.x, start.y);
+          if (p) { haptic(); showTap(start.x, start.y, 'right'); input({ type: 'rightclick', ...p }); }
+        }, 520);
+      } else if (pts.size === 2) {
+        clearTimeout(pressTimer);
+        if (mode === 'drag') { const p = norm(start.x, start.y); input({ type: 'up', ...(p || {}) }); }
+        const [a, b] = [...pts.values()];
+        pinch0 = { d: Math.hypot(a.x - b.x, a.y - b.y), zoom, cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2, panX, panY };
+        scrollY0 = (a.y + b.y) / 2; scrollX0 = (a.x + b.x) / 2;
+        mode = 'two';
+      }
+    });
+    stage.addEventListener('pointermove', (e) => {
+      if (!pts.has(e.pointerId)) return;
+      pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (mode === 'pending' && Math.hypot(e.clientX - start.x, e.clientY - start.y) > 10) {
+        clearTimeout(pressTimer);
+        if (zoom > 1.01) mode = 'pan';
+        else { mode = 'drag'; const p = norm(start.x, start.y); if (p) input({ type: 'down', ...p }); }
+        start.px = panX; start.py = panY;
+      }
+      if (mode === 'pan') { panX = start.px + (e.clientX - start.x); panY = start.py + (e.clientY - start.y); clampPan(); fit(); }
+      else if (mode === 'drag' && e.timeStamp - moveAt > 33) { moveAt = e.timeStamp; const p = norm(e.clientX, e.clientY); if (p) input({ type: 'move', ...p }); }
+      else if (mode === 'two' && pts.size === 2) {
+        const [a, b] = [...pts.values()];
+        const d = Math.hypot(a.x - b.x, a.y - b.y), cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2;
+        if (Math.abs(d / pinch0.d - 1) > 0.08 || pinch0.pinching) {
+          // pinch: zoom the view around the fingers
+          pinch0.pinching = true;
+          zoom = Math.max(1, Math.min(4, pinch0.zoom * d / pinch0.d));
+          panX = pinch0.panX + (cx - pinch0.cx); panY = pinch0.panY + (cy - pinch0.cy);
+          clampPan(); fit();
+        } else if (e.timeStamp - moveAt > 50) {
+          // two fingers moving together: scroll the Mac
+          moveAt = e.timeStamp;
+          // like a touchscreen: fingers moving up scroll the content down (the agent takes dy > 0 as down)
+          const dy = Math.round((scrollY0 - cy) * 2), dx = Math.round((scrollX0 - cx) * 2);
+          scrollY0 = cy; scrollX0 = cx;
+          if (dx || dy) { const p = norm(cx, cy); input({ type: 'scroll', dx, dy, ...(p || {}) }); }
+        }
+      }
+    });
+    const end = (e) => {
+      if (!pts.has(e.pointerId)) return;
+      pts.delete(e.pointerId);
+      clearTimeout(pressTimer);
+      if (mode === 'pending' && pts.size === 0) {
+        const p = norm(start.x, start.y);
+        if (p) {
+          if (lastTap && e.timeStamp - lastTap.t < 300 && Math.hypot(start.x - lastTap.x, start.y - lastTap.y) < 30) {
+            clearTimeout(tapTimer); lastTap = null; showTap(start.x, start.y, 'double'); input({ type: 'dblclick', ...p });
+          } else {
+            // a single click waits a moment for a possible second tap (a double click)
+            lastTap = { x: start.x, y: start.y, t: e.timeStamp };
+            const sp = { ...p }, sx = start.x, sy = start.y;
+            tapTimer = setTimeout(() => { lastTap = null; showTap(sx, sy); input({ type: 'click', ...sp }); }, 230);
+          }
+        }
+      } else if (mode === 'drag' && pts.size === 0) {
+        const p = norm(e.clientX, e.clientY);
+        input({ type: 'up', ...(p || {}) });
+      }
+      if (pts.size === 0) mode = null;
+    };
+    stage.addEventListener('pointerup', end);
+    stage.addEventListener('pointercancel', end);
+    stage.addEventListener('dblclick', (e) => e.preventDefault());
+
+    // ---- keyboard: what is typed goes to the Mac as text; Enter / Backspace as keys
+    kbd.addEventListener('input', () => { const v = kbd.value; kbd.value = ''; if (v) input({ type: 'text', text: v }); });
+    kbd.addEventListener('keydown', (e) => {
+      const k = { Enter: 'enter', Backspace: 'backspace', Tab: 'tab', Escape: 'esc', ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' }[e.key];
+      if (k) { e.preventDefault(); input({ type: 'key', key: k, mods: '' }); }
+    });
+
+    // ---- displays and permissions
+    const drawScreens = () => {
+      const list = info?.displays || [];
+      screens.replaceChildren(...list.map((d) => {
+        const b = h('button', 'rm-scr' + (display?.id === d.id ? ' on' : ''), icon(d.main ? 'laptop' : 'monitor'), h('span', null, d.name));
+        b.type = 'button';
+        b.addEventListener('click', (e) => { e.stopPropagation(); haptic(); display = d; since = 0; zoom = 1; panX = panY = 0; drawScreens(); });
+        return b;
+      }));
+    };
+    const loadInfo = async () => {
+      try {
+        info = await api('/remote/info');
+        if (!display || !info.displays?.some((d) => d.id === display.id)) display = info.displays?.find((d) => d.main) || info.displays?.[0] || null;
+        drawScreens();
+        if (!info.enabled) say('Remote desktop is off', 'Turn on “Let the phone view and control this computer” in the computer’s PhoneBox Settings.');
+        else if (!info.screenPermission) say('PhoneBox may not see the screen yet', 'Allow PhoneBoxAgent in System Settings › Privacy & Security › Screen Recording, then restart PhoneBox.');
+        else if (!lastUrl) say('Connecting…');
+        box.classList.toggle('rm-viewonly', info.enabled && !info.inputPermission);
+        if (visible) loop();
+      } catch (_) { say('The computer is not reachable'); }
+    };
+    say('Connecting…');
+    loadInfo();
+    let infoAt = Date.now();
+    return {
+      update() { if (Date.now() - infoAt > 5000) { infoAt = Date.now(); loadInfo(); } },
+      destroy() { visible = false; if (lastUrl) URL.revokeObjectURL(lastUrl); document.body.classList.remove('rm-fullscreen'); },
+    };
+  },
+};

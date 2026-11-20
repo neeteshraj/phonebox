@@ -166,6 +166,9 @@
     { id: 'BuiltInSpeakerDevice', name: 'MacBook Pro Speakers', transport: 'builtin', current: true },
     { id: 'lg-ultrafine', name: 'LG ULTRAFINE', transport: 'displayport', current: false },
     { id: 'airpods', name: 'AirPods Pro', transport: 'bluetooth', current: false }];
+  const remoteInput = [];
+  const remotePtr = { x: .5, y: .45 };
+  let remoteSeq = 0;
   let demoClipboard = 'https://github.com/ersinkoc/phonebox';
   const demoUsage = () => {
     const day = (k) => new Date(now() - k * 864e5).toISOString().slice(0, 10);
@@ -707,6 +710,32 @@
     if (path === '/api/procs') return json(procs());
     if (path === '/api/procs/detail') return json(procDetail(q.get('name')));
     if (path.startsWith('/api/widget/')) return json({ output: String(3 + Math.floor(Math.random() * 3)), at: now() - 8000, ok: true, running: false, durationMs: 412 });
+    // Remote desktop: a made-up Mac screen drawn on the fly, with the pointer where the last input put it
+    if (path === '/api/remote/info' && method === 'GET') return json({ enabled: true, screenPermission: true, inputPermission: true, capture: 'ffmpeg',
+      displays: [{ id: '1', name: 'Built-in Display', width: 1800, height: 1169, main: true }, { id: '2', name: 'DELL S2421HN', width: 1920, height: 1080, main: false }] });
+    if (path === '/api/remote/input' && method === 'POST') {
+      remoteInput.push(Object.fromEntries(q));
+      if (q.has('x')) { remotePtr.x = +q.get('x'); remotePtr.y = +q.get('y'); }
+      return json({ ok: true });
+    }
+    if (path === '/api/remote/frame' && method === 'GET') {
+      await new Promise((ok) => setTimeout(ok, 120));
+      const w = Math.min(1600, +(q.get('w') || 1280)), hgt = Math.round(w * (q.get('display') === '2' ? 1080 / 1920 : 1169 / 1800));
+      const c = new OffscreenCanvas(w, hgt), g = c.getContext('2d');
+      const bg = g.createLinearGradient(0, 0, w, hgt); bg.addColorStop(0, '#1e3a8a'); bg.addColorStop(.55, '#6d28d9'); bg.addColorStop(1, '#db2777');
+      g.fillStyle = bg; g.fillRect(0, 0, w, hgt);
+      g.fillStyle = 'rgba(20,20,24,.55)'; g.fillRect(0, 0, w, hgt * .03);
+      g.fillStyle = '#fff'; g.font = `${Math.round(hgt * .018)}px system-ui`; g.fillText('  Code   File   Edit   View', 8, hgt * .021);
+      g.fillStyle = 'rgba(30,30,34,.92)'; g.beginPath(); g.roundRect(w * .12, hgt * .12, w * .6, hgt * .62, 12); g.fill();
+      g.fillStyle = '#9cdcfe'; g.font = `${Math.round(hgt * .022)}px ui-monospace, monospace`;
+      ['export function limit() {', '  return rateLimit({ max: 200 });', '}', '', '// remote demo: ' + new Date().toLocaleTimeString()].forEach((l, i) => g.fillText(l, w * .15, hgt * (.2 + i * .04)));
+      g.fillStyle = 'rgba(255,255,255,.18)'; g.beginPath(); g.roundRect(w * .3, hgt * .88, w * .4, hgt * .09, 18); g.fill();
+      ['#3b82f6', '#22c55e', '#f59e0b', '#ef4444', '#a855f7'].forEach((col, i) => { g.fillStyle = col; g.beginPath(); g.roundRect(w * (.32 + i * .075), hgt * .895, hgt * .07, hgt * .07, 10); g.fill(); });
+      g.fillStyle = '#fff'; g.strokeStyle = '#000'; g.lineWidth = 1.5;
+      const px = remotePtr.x * w, py = remotePtr.y * hgt; g.beginPath(); g.moveTo(px, py); g.lineTo(px, py + 22); g.lineTo(px + 6, py + 16); g.lineTo(px + 15, py + 15); g.closePath(); g.fill(); g.stroke();
+      const blob = await c.convertToBlob({ type: 'image/jpeg', quality: +(q.get('q') || 60) / 100 });
+      return new Response(blob, { headers: { 'Content-Type': 'image/jpeg', 'X-Frame-Seq': String(++remoteSeq), 'Cache-Control': 'no-store' } });
+    }
     // Mac controls: running apps, power, sound outputs, clipboard
     if (path === '/api/system/apps' && method === 'GET') return json(demoApps);
     if (path === '/api/system/apps/activate' && method === 'POST') { demoApps.forEach((a) => (a.active = a.bundleId === q.get('bundle'))); return json({ ok: true }); }
@@ -919,7 +948,7 @@
     on('ask', (d) => ask(d || undefined, false));
   }
 
-  window.PhoneBoxDemo = { emit, ask,
+  window.PhoneBoxDemo = { remoteInput, emit, ask,
     reset() { localStorage.removeItem('pb-demo-config'); store.set('pb-demo-version', cfgVersion() + 1); },
     // the agent restarted: PushStore keeps events in memory only, so its counter and backlog start over
     restart() { seq = 0; events.length = 0; } };

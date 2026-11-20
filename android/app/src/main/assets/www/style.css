@@ -1615,3 +1615,48 @@ body.controls-top .ap-foot { order: -1; margin-bottom: 4px; }
 .lx .lx-cc.on .lx-state { color: color-mix(in oklab, var(--k) 60%, #fff); }
 .lx .lx-cc.toggle::before { display: none; }
 @media (prefers-reduced-motion: reduce) { .lx .lx-app { animation: none; } }
+
+/* ---------- remote desktop ---------- */
+.w-remote { display: flex; flex-direction: column; gap: 8px; padding: 0; background: none; border: 0; }
+.w-remote.card { background: none; }
+.rm-stage { position: relative; flex: 1; min-height: 0; overflow: hidden; border-radius: 22px; background: #050608; touch-action: none; -webkit-user-select: none; user-select: none;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .06); }
+.rm-screen { position: absolute; top: 0; left: 0; transform-origin: 0 0; pointer-events: none; image-rendering: auto; will-change: transform; }
+.rm-msg { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 24px; text-align: center; background: rgba(5, 6, 8, .72); }
+.rm-msg[hidden] { display: none; }
+.rm-msg b { font-size: 17px; font-weight: 600; }
+.rm-msg span { font-size: 13px; color: var(--muted); max-width: 460px; }
+.rm-tap { position: absolute; width: 44px; height: 44px; margin: -22px 0 0 -22px; border-radius: 50%; border: 2px solid rgba(255, 255, 255, .85); opacity: 0; pointer-events: none; }
+.rm-tap.go { animation: rm-tap .45s ease-out; }
+.rm-tap.right { border-color: #fbbf24; }
+.rm-tap.double { border-width: 4px; }
+@keyframes rm-tap { from { transform: scale(.4); opacity: 1; } to { transform: scale(1.4); opacity: 0; } }
+.rm-bar {
+  position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%); z-index: 2; display: flex; align-items: center; gap: 4px; max-width: calc(100% - 20px);
+  padding: 6px; border-radius: 999px; background: rgba(28, 30, 36, .7); -webkit-backdrop-filter: blur(20px) saturate(1.6); backdrop-filter: blur(20px) saturate(1.6);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .4), inset 0 .5px 0 rgba(255, 255, 255, .15);
+}
+.rm-screens { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; min-width: 0; }
+.rm-screens::-webkit-scrollbar { display: none; }
+.rm-scr { flex: none; display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; border-radius: 999px; font-size: 12.5px; color: rgba(255, 255, 255, .8); }
+.rm-scr .ico { width: 15px; height: 15px; }
+.rm-scr.on { background: rgba(255, 255, 255, .92); color: #111; font-weight: 600; }
+.rm-btn { flex: none; width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; color: rgba(255, 255, 255, .85); }
+.rm-btn .ico { width: 18px; height: 18px; }
+.rm-btn.on { background: rgba(255, 255, 255, .16); color: #fff; }
+.rm-btn:active, .rm-key:active, .rm-scr:active { transform: scale(.92); }
+.rm-fps { flex: none; padding: 0 8px 0 4px; font-size: 11px; color: rgba(255, 255, 255, .55); font-variant-numeric: tabular-nums; }
+.rm-keys { position: absolute; left: 50%; bottom: 62px; transform: translateX(-50%); z-index: 2; display: flex; gap: 5px; max-width: calc(100% - 20px); overflow-x: auto; scrollbar-width: none;
+  padding: 6px; border-radius: 18px; background: rgba(28, 30, 36, .7); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); }
+.rm-keys[hidden] { display: none; }
+.rm-key { flex: none; min-width: 44px; padding: 8px 10px; border-radius: 10px; font-size: 13px; font-weight: 600; color: #fff; background: rgba(255, 255, 255, .1); box-shadow: inset 0 -1px 0 rgba(0, 0, 0, .3); }
+.rm-kbd { position: absolute; left: 0; bottom: 0; width: 1px; height: 1px; opacity: 0; border: 0; padding: 0; }
+.w-remote { position: relative; }
+.w-remote.rm-viewonly .rm-stage::after { content: "View only: allow Accessibility on the Mac to control it"; position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+  padding: 5px 12px; border-radius: 999px; font-size: 12px; background: rgba(251, 191, 36, .2); color: #fde68a; pointer-events: none; }
+.w-remote.rm-full { position: fixed; inset: 0; z-index: 30; padding: 0; background: #000; }
+.w-remote.rm-full .rm-stage { border-radius: 0; }
+body.rm-fullscreen #dots, body.rm-fullscreen #ptitle { display: none; }
+.rm-screens { flex: 0 1 auto; }
+.rm-scr span { max-width: 140px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@container (max-width: 700px) { .rm-scr span { display: none; } }
