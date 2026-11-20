@@ -36,7 +36,8 @@ internal static partial class RemoteDesktop
             res.Headers.CacheControl = "no-store";
             if (frame is null) return Results.Json(new { error = "Could not capture the screen" }, statusCode: 503);
             res.Headers["X-Frame-Seq"] = frame.Value.Seq.ToString(CultureInfo.InvariantCulture);
-            return frame.Value.Jpeg is { } jpeg ? Results.File(jpeg, "image/jpeg") : Results.StatusCode(304);
+            // "nothing new" is 204, not 304: the phone app's transport refuses every 3xx answer (redirect guard)
+            return frame.Value.Jpeg is { } jpeg ? Results.File(jpeg, "image/jpeg") : Results.StatusCode(204);
         });
         app.MapPost("/api/remote/input", (HttpRequest req, ConfigStore cfg) =>
         {
@@ -280,7 +281,7 @@ internal sealed class RemoteCapture : IDisposable
     public string Method() => FfmpegUsable ? "ffmpeg" : File.Exists("/usr/sbin/screencapture") ? "screencapture" : "none";
 
     /// <summary>The newest frame and its number; Jpeg null = nothing newer than <paramref name="since"/> within 1 s
-    /// (304). Null when the screen could not be captured.</summary>
+    /// (204). Null when the screen could not be captured.</summary>
     public async Task<(byte[]? Jpeg, long Seq)?> FrameAsync(IReadOnlyList<RemoteDisplay> displays, RemoteDisplay display, int w, int q, long? since, CancellationToken ct)
     {
         if (FfmpegUsable && await DeviceAsync(displays, display.Id, ct) is { } device)
@@ -374,7 +375,7 @@ internal sealed class RemoteCapture : IDisposable
             {
                 lock (_gate)
                 {
-                    if (s.Frame is { } prev && prev.AsSpan().SequenceEqual(jpeg)) return; // still screen: no new number, so the phone's wait ends in 304
+                    if (s.Frame is { } prev && prev.AsSpan().SequenceEqual(jpeg)) return; // still screen: no new number, so the phone's wait ends in 204
                     s.Frame = jpeg;
                     s.Seq = Interlocked.Increment(ref _seq);
                     var wake = s.Next;

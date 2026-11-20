@@ -1331,7 +1331,7 @@ W.remote = {
             img.onload = () => { if (old) URL.revokeObjectURL(old); fit(); say(''); };
             img.src = url;
             frames++;
-          } else if (r.status === 304) { /* nothing new */ }
+          } else if (r.status === 204 || r.status === 304) { /* nothing new on the screen */ }
           else {
             const j = await r.json().catch(() => ({}));
             say(r.status === 403 ? 'Remote desktop is off' : r.status === 409 ? 'PhoneBox may not see the screen yet' : 'No picture',
@@ -1340,7 +1340,8 @@ W.remote = {
           }
         } catch (_) { say('Connecting…'); await new Promise((ok) => setTimeout(ok, 1000)); }
         const now = performance.now();
-        if (now - fpsAt > 1000) { fps.textContent = `${Math.round((frames * 1000) / (now - fpsAt))} fps`; frames = 0; fpsAt = now; }
+        // a still screen sends no new frames: say "Live" then rather than a worrying "0 fps"
+        if (now - fpsAt > 1000) { const n = Math.round((frames * 1000) / (now - fpsAt)); fps.textContent = n ? `${n} fps` : (lastUrl ? 'Live' : ''); frames = 0; fpsAt = now; }
       }
       running = false;
     };
