@@ -306,6 +306,11 @@ public static class KeySender
         Osa($"tell application \"System Events\" to {action}{using_}");
     }
 
+    /// <summary>The macOS virtual key code of a normalized key name (enter, f5, left…), or null (media keys, letters).</summary>
+    internal static int? MacKeyCode(string k) =>
+        Special.TryGetValue(k, out var s) ? (s.Mac >= 0 ? s.Mac : null)
+        : k.Length is 2 or 3 && k[0] == 'f' && int.TryParse(k[1..], out var n) && n is >= 1 and <= 20 ? MacF(n) : null;
+
     private static int MacF(int n) => n switch
     {
         1 => 122, 2 => 120, 3 => 99, 4 => 118, 5 => 96, 6 => 97, 7 => 98, 8 => 100, 9 => 101, 10 => 109, 11 => 103, 12 => 111,
@@ -349,8 +354,6 @@ public static class KeySender
 
     private static void UnixMouse(params string[] args)
     {
-        if (OperatingSystem.IsMacOS())
-            throw new PlatformNotSupportedException("The Trackpad widget is not supported on macOS yet.");
         var xdotool = Sh.Which("xdotool");
         if (xdotool is null)
             throw new InvalidOperationException("controlling the mouse needs xdotool (X11)");
@@ -366,9 +369,20 @@ public static class KeySender
         }
     }
 
+    /// <summary>macOS: the Trackpad widget's input as CGEvents (MacSystem), which macOS drops silently without the
+    /// Accessibility permission, so that is checked first.</summary>
+    private static bool Mac(Action post)
+    {
+        if (!OperatingSystem.IsMacOS()) return false;
+        if (!MacSystem.InputTrusted()) { MacSystem.AskInputTrust(); throw new InvalidOperationException(AccessibilityHint); }
+        post();
+        return true;
+    }
+
     public static void MouseMove(int dx, int dy)
     {
         if (TestMouseSink is not null) { TestMouseSink(new MouseCall("move", dx, dy, 0)); return; }
+        if (Mac(() => MacSystem.MoveBy(dx, dy))) return;
         lock (UnixMoveLock)
         {
             _unixPendingDx += dx;
@@ -390,14 +404,19 @@ public static class KeySender
     public static void MouseClick()
     {
         if (TestMouseSink is not null) { TestMouseSink(new MouseCall("click", 0, 0, 0)); return; }
+        if (Mac(() => MacSystem.ClickHere(0))) return;
         UnixAction("click", "1");
     }
 
     public static void MouseRightClick()
     {
         if (TestMouseSink is not null) { TestMouseSink(new MouseCall("rightClick", 0, 0, 0)); return; }
+        if (Mac(() => MacSystem.ClickHere(1))) return;
         UnixAction("click", "3");
     }
+
+    /// <summary>A Windows wheel delta (120 = one notch) as CoreGraphics pixels: a notch scrolls 40 px.</summary>
+    internal static int MacScrollPixels(int delta) => (int)Math.Round(delta / 3.0);
 
     private static int _unixVScrollAcc;
     private static int _unixHScrollAcc;
@@ -406,6 +425,7 @@ public static class KeySender
     {
         if (delta == 0) return;
         if (TestMouseSink is not null) { TestMouseSink(new MouseCall("scroll", 0, 0, delta)); return; }
+        if (Mac(() => MacSystem.Scroll(MacScrollPixels(delta), 0))) return;
         _unixVScrollAcc += delta;
         var n = Math.Abs(_unixVScrollAcc) / 120;
         if (n == 0) return;
@@ -418,6 +438,7 @@ public static class KeySender
     {
         if (delta == 0) return;
         if (TestMouseSink is not null) { TestMouseSink(new MouseCall("hscroll", 0, 0, delta)); return; }
+        if (Mac(() => MacSystem.Scroll(0, -MacScrollPixels(delta)))) return;
         _unixHScrollAcc += delta;
         var n = Math.Abs(_unixHScrollAcc) / 120;
         if (n == 0) return;
@@ -429,12 +450,14 @@ public static class KeySender
     public static void MouseDown()
     {
         if (TestMouseSink is not null) { TestMouseSink(new MouseCall("mouseDown", 0, 0, 0)); return; }
+        if (Mac(() => MacSystem.ButtonHere(0, true))) return;
         UnixAction("mousedown", "1");
     }
 
     public static void MouseUp()
     {
         if (TestMouseSink is not null) { TestMouseSink(new MouseCall("mouseUp", 0, 0, 0)); return; }
+        if (Mac(() => MacSystem.ButtonHere(0, false))) return;
         UnixAction("mouseup", "1");
     }
 #endif

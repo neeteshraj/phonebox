@@ -43,6 +43,8 @@ public sealed class AgentConfig
     public DiscordConfig Discord { get; set; } = new();
     /// <summary>App console widget: key and dial bindings per app (the phone gets labels and ids, not the keys to press).</summary>
     public ConsoleConfig Console { get; set; } = new();
+    /// <summary>Remote desktop (macOS): the phone views this computer's screen and controls it (off by default).</summary>
+    public RemoteConfig Remote { get; set; } = new();
 
     /// <summary>The pages a phone shows: its own selection (Settings › Phones), or all of them.</summary>
     public IEnumerable<PageConfig> PagesFor(string? deviceId)
@@ -221,6 +223,12 @@ public sealed class ClaudeConfig
     /// <summary>Show each Claude Code chat's title on the phone. The title is the name you gave the chat or the one
     /// Claude Code wrote, which it often draws from your first prompt, so it stays off until you turn it on.</summary>
     public bool ShareSessionTitles { get; set; }
+}
+
+public sealed class RemoteConfig
+{
+    /// <summary>Let the phone view and control this computer (/api/remote/*, see RemoteDesktop).</summary>
+    public bool Enabled { get; set; }
 }
 
 public sealed class CursorConfig
@@ -553,6 +561,7 @@ public sealed partial class ConfigStore(string path)
         c.Claude ??= new();
         c.Claude.TimeoutSec = Math.Clamp(c.Claude.TimeoutSec, 10, 3600);
         c.Cursor ??= new();
+        c.Remote ??= new();
         if (string.IsNullOrWhiteSpace(c.Updates.Repo)) c.Updates.Repo = "ersinkoc/phonebox";
         c.Lan.Port = Math.Clamp(c.Lan.Port, 1024, 65535);
         if (string.IsNullOrWhiteSpace(c.Lan.Token)) c.Lan.Token = NewToken();

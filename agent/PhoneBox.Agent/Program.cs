@@ -72,6 +72,9 @@ builder.Services.AddSingleton<HomeAssistant>();
 builder.Services.AddSingleton<AppConsole>();
 builder.Services.AddSingleton<Dictation>();
 builder.Services.AddSingleton<SpectrumAnalyzer>();
+#if !WINDOWS
+builder.Services.AddSingleton<RemoteCapture>(); // disposed with the host: its ffmpeg processes end with the agent
+#endif
 AddMonitor<SystemMonitor>(builder.Services);
 AddMonitor<MediaMonitor>(builder.Services);
 AddMonitor<QuotaMonitor>(builder.Services);
@@ -799,6 +802,9 @@ app.MapPost("/api/system/display/brightness", (string? id, int? value, ControlDe
 app.MapPost("/api/system/keyboard", (int? value) => SystemControls.Keyboard(value));
 app.MapPost("/api/system/search", (string? q) => SystemControls.Search(q));
 SystemControls.MapMacRoutes(app); // window switcher, clipboard, power, audio outputs
+#if !WINDOWS
+RemoteDesktop.Map(app); // remote desktop: screen frames and pointer / keyboard input (macOS)
+#endif
 
 app.MapGet("/api/quotas", (QuotaMonitor q) => Results.Json(new { providers = q.Snapshot(), overview = q.Overview() }));
 

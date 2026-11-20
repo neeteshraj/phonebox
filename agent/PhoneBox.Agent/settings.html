@@ -787,6 +787,11 @@ nav a.on::before { color: var(--accent); }
         <div class="row"><button class="btn primary" id="lanPair" data-i18n="s.wifi.pair">Pair a phone over Wi-Fi</button><button class="btn" id="lanRegen" data-i18n="s.wifi.newKey">New key (unpair phones)</button><span class="hint" id="lanStatus"></span></div>
       </div>
       <div class="card">
+        <h3 data-i18n="s.remote.title">Remote desktop</h3>
+        <div class="row" style="margin-bottom:8px"><label class="switch"><input type="checkbox" data-bind="remote.enabled"><span></span></label> <span data-i18n="s.remote.enabled">Let the phone view and control this computer (remote desktop)</span></div>
+        <p class="hint" style="margin:0" data-i18n="s.remote.hint">On macOS, allow PhoneBoxAgent under System Settings › Privacy &amp; Security › Screen Recording (to see the screen) and Accessibility (to control it). macOS asks the first time the phone connects.</p>
+      </div>
+      <div class="card">
         <h3 data-i18n="s.updates.title">Updates</h3>
         <div class="row" style="margin-bottom:8px"><label class="switch"><input type="checkbox" data-bind="updates.auto"><span></span></label> <span data-i18n="s.updates.auto">Install new releases automatically</span></div>
         <p class="hint" style="margin:0 0 12px"><span data-i18n="s.upd.checksBefore">Checks</span> <span id="updRepo"></span> <span data-i18n="s.upd.checksAfter">on GitHub every 6 hours. The phone app is installed over USB without a prompt on the phone; the agent replaces its own files and restarts.</span></p>
