@@ -29,8 +29,6 @@ export const PANEL_HEADERS = { 'X-PhoneBox-Panel': '1' };
 export const I18n = window.PhoneBoxI18n;
 export const t = (key, vars) => (I18n ? I18n.t(key, vars) : key);
 export let LOCALE = I18n ? I18n.getLocale() : 'en-GB';
-export const COLS = 12;
-export const ROWS = 6;
 export const $ = (id) => document.getElementById(id);
 // The native bridge (window.Android) is in every frame, sandboxed widgets included, so each call carries a key that only
 // the panel's own frames receive (MainActivity.bridgeKey). This wrapper adds it.
@@ -68,7 +66,6 @@ export const store = {
 
 export let cfg = PREVIEW ? { ...DEFAULT_CFG, pages: [] } : { ...DEFAULT_CFG, ...store.get('cfg', {}) };
 export let cfgVersion = null;
-export function setCfgVersion(v) { if (v != null) cfgVersion = v; }
 let configRequest = 0;
 let appliedConfigRequest = 0;
 let writeBarrier = 0; // config reads numbered below this started before the panel's own last write
