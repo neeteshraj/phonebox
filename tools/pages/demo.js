@@ -897,7 +897,7 @@
     const url = new URL(typeof input === 'string' ? input : input.url, location.href);
     const i = url.pathname.indexOf('/api/');
     // lyrics (lrclib.net): made-up synced lines for the demo's songs, so nothing leaves the page
-    if (url.host === 'lrclib.net') {
+    if (url.pathname.includes('/api/media/lyrics/')) {
       const words = ['Neon lights over the harbor', 'We drive until the morning', 'Static on the radio', 'Your voice in every song',
         'Midnight circuit, take me home', 'Low tide, slow light', 'We were never meant to stop', '(instrumental break)', 'Neon lights over the harbor'];
       const lrc = words.map((w, k) => `[${String(Math.floor(k * 6 / 60)).padStart(2, '0')}:${String(k * 6 % 60).padStart(2, '0')}.00] ${w}`).join('\n');

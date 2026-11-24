@@ -760,6 +760,21 @@ app.MapGet("/api/art", (MediaMonitor media) =>
 app.MapGet("/api/media/art", (string? session, MediaMonitor media) =>
     media.SessionArt(string.IsNullOrEmpty(session) ? "system" : session) is { } art ? Results.File(art.Bytes, art.Mime) : Results.NotFound());
 
+// lyrics lookups for the panel, asked by the computer: the phone's own DNS may not resolve outside names (Private DNS,
+// Tailscale), while the agent link always works. A plain pass-through to lrclib.net's get / search.
+var lyricsHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+lyricsHttp.DefaultRequestHeaders.UserAgent.ParseAdd("PhoneBox (https://github.com/ersinkoc/phonebox)");
+app.MapGet("/api/media/lyrics/{kind}", async (string kind, HttpRequest req, CancellationToken ct) =>
+{
+    if (kind is not ("get" or "search")) return Results.NotFound();
+    try
+    {
+        using var r = await lyricsHttp.GetAsync($"https://lrclib.net/api/{kind}{req.QueryString}", ct);
+        return Results.Content(await r.Content.ReadAsStringAsync(ct), "application/json", statusCode: (int)r.StatusCode);
+    }
+    catch (Exception) when (!ct.IsCancellationRequested) { return Results.StatusCode(502); }
+});
+
 app.MapPost("/api/media/{action}", async (string action, long? ms, string? session, MediaMonitor media, ControlDeck deck, CancellationToken ct) =>
 {
     var outcome = await deck.RunWithMediaFocusAsync(async token =>

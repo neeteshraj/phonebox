@@ -1,6 +1,12 @@
 // Lyrics for what the computer is playing, from lrclib.net (free, no account), looked up by the phone itself.
 // Synced lyrics ([mm:ss.xx] lines) when lrclib has them, else plain text; one lookup per song, cached.
 
+import { api } from '../main.js';
+
+// asked through the agent (GET /api/media/lyrics/get|search): the phone's own DNS may not resolve lrclib.net
+// (Private DNS, Tailscale), while the agent link always works. A miss (404) or an error is null.
+const ask = (kind, qs) => api(`/media/lyrics/${kind}?${qs}`, 'GET', 12000).catch(() => null);
+
 const cache = new Map(); // "artist|title" -> Promise<{ synced, plain, instrumental } | null>
 
 // extras that music channels add to a title: "(Official Video)", "- Audio", "| Movie | Cast", "Lyrical", "Full Song" …
@@ -50,18 +56,15 @@ async function lookup(title, artist, durMs) {
   // 1) exact records for each reading of the title
   for (const [song, a] of tries) {
     if (!a) continue;
-    try {
-      const qs = new URLSearchParams({ track_name: song, artist_name: a });
-      if (durMs > 0) qs.set('duration', String(Math.round(durMs / 1000)));
-      const r = await fetch('https://lrclib.net/api/get?' + qs, { cache: 'force-cache' });
-      if (r.ok) { const s = shape(await r.json()); if (good(s)) return s; }
-    } catch (_) {}
+    const qs = new URLSearchParams({ track_name: song, artist_name: a });
+    if (durMs > 0) qs.set('duration', String(Math.round(durMs / 1000)));
+    const s = shape(await ask('get', qs));
+    if (good(s)) return s;
   }
   // 2) a search by song name: the same title, synced first, the closest length (skips sped-up / lofi versions)
   for (const [song, a] of tries) {
     try {
-      const r = await fetch('https://lrclib.net/api/search?' + new URLSearchParams({ q: song }), { cache: 'force-cache' });
-      const list = r.ok ? await r.json() : [];
+      const list = await ask('search', new URLSearchParams({ q: song }));
       const want = fold(song), wa = fold(a);
       const score = (x) => (fold(x.trackName) === want ? 0 : 20) + (x.syncedLyrics ? 0 : 10)
         + (wa && (fold(x.artistName).includes(wa) || wa.includes(fold(x.artistName))) ? 0 : 3)
