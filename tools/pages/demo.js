@@ -896,6 +896,14 @@
   window.fetch = async (input, init = {}) => {
     const url = new URL(typeof input === 'string' ? input : input.url, location.href);
     const i = url.pathname.indexOf('/api/');
+    // lyrics (lrclib.net): made-up synced lines for the demo's songs, so nothing leaves the page
+    if (url.host === 'lrclib.net') {
+      const words = ['Neon lights over the harbor', 'We drive until the morning', 'Static on the radio', 'Your voice in every song',
+        'Midnight circuit, take me home', 'Low tide, slow light', 'We were never meant to stop', '(instrumental break)', 'Neon lights over the harbor'];
+      const lrc = words.map((w, k) => `[${String(Math.floor(k * 6 / 60)).padStart(2, '0')}:${String(k * 6 % 60).padStart(2, '0')}.00] ${w}`).join('\n');
+      const rec = { trackName: url.searchParams.get('track_name') || 'Midnight Circuit', artistName: 'Neon Harbor', duration: 214, instrumental: false, plainLyrics: words.join('\n'), syncedLyrics: lrc };
+      return Promise.resolve(Response.json(url.pathname.endsWith('/search') ? [rec] : rec));
+    }
     if (url.origin !== location.origin || i < 0) return realFetch(input, init);
     return handle((init.method || 'GET').toUpperCase(), url.pathname.slice(i), url.searchParams, init.body, new Headers(init.headers || {}));
   };

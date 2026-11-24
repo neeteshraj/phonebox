@@ -1989,7 +1989,7 @@ export function applyDisplay() {
   LOCALE = I18n ? I18n.getLocale() : 'en-GB';
   I18n?.applyDom();
   // theme and accent apply in the preview and the browser too
-  document.body.dataset.theme = ['amoled', 'midnight', 'warm', 'graphite', 'material'].includes(d.theme) ? d.theme : 'default';
+  document.body.dataset.theme = ['amoled', 'midnight', 'warm', 'graphite', 'material', 'shadcn'].includes(d.theme) ? d.theme : 'default';
   const accent = hexToRgb(d.accent);
   const before = DEFAULT_AMBIENT;
   DEFAULT_AMBIENT = accent || '45, 212, 191';

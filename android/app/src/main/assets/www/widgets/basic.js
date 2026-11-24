@@ -1,6 +1,7 @@
 import { bridge, runListeners, sessionRuns, monogramColor, sheetDrag, $, API, D, LEVEL_COLOR, LOCALE, mediaHtml, METRICS, PANEL_HEADERS, PREVIEW, Q_STYLE, S_ORDER, ago, api, averageColor, buildLayout, buzz, cfg, cfgVersion, chart, color, cssVar, currentProcessesSort, emit, fillIcon, fmtClock, fmtDur, fmtHM, fmtMem, fmtReset, fmtTime, fmtValue, gotoProcesses, gpuMem, gpusOf, h, en, haptic, hasProcessesPage, hist, hour12, icon, keyButton, levelOf, media, metricText, online, openSheet, paceInfo, pad, prRow, pushView, quotaProviders, r1, registerProcessesSorter, renderStatus, ringSvg, setArtColor, configMark, configReadSince, localWriteStored, setMediaState, setVolDragging, shortDur, shortGpu, store, t, tick, toast, volDragging, wxBlock, wxDeg, wxIcon } from '../main.js';
 import { W } from '../registry.js';
 import { dictateInto, stopDictation } from './dictate.js';
+import { lyricsFor, lineAt } from './lyrics.js';
 import { invalidateDeckState } from './controls.js';
 
 /** The chance of rain under a forecast cell, from 20 % up, with a drop glyph. */
@@ -264,20 +265,13 @@ W.media = {
       const key = `${m.artist}|${m.title}`;
       if (!o.lyrics || key === lyricKey) return;
       lyricKey = key; lines = null; lyric.replaceChildren();
-      if (!m.title || !m.artist) return;
-      try {
-        const qs = `artist_name=${encodeURIComponent(m.artist)}&track_name=${encodeURIComponent(m.title)}` + (m.durMs > 0 ? `&duration=${Math.round(m.durMs / 1000)}` : '');
-        const r = await fetch('https://lrclib.net/api/get?' + qs, { cache: 'force-cache' });
-        const j = r.ok ? await r.json() : null;
-        if (key !== lyricKey || !j?.syncedLyrics) return;
-        lines = j.syncedLyrics.split('\n').map((l) => { const x = /^\[(\d+):(\d+(?:\.\d+)?)\]\s*(.*)$/.exec(l); return x ? { at: (+x[1] * 60 + +x[2]) * 1000, text: x[3] } : null; }).filter((l) => l && l.text);
-      } catch (_) {}
+      const l = await lyricsFor(m);
+      if (key === lyricKey) lines = l?.synced?.filter((x) => x.text) || null;
     };
     let lyricShown = -2;
     const paintLyric = (pos) => {
       if (!lines?.length) { if (lyricShown !== -2) { lyric.replaceChildren(); lyricShown = -2; } return; }
-      let i = -1;
-      for (let k = 0; k < lines.length && lines[k].at <= pos + 250; k++) i = k;
+      const i = lineAt(lines, pos);
       if (i === lyricShown) return;
       lyricShown = i;
       lyric.replaceChildren(h('b', null, i >= 0 ? lines[i].text : '♪'), h('span', null, lines[i + 1]?.text || ''));
@@ -1587,6 +1581,96 @@ W.usage = {
         busy = true;
         try { const u = await api('/usage'); if (u) { draw(u); at = Date.now(); } } catch (_) {} finally { busy = false; }
       },
+    };
+  },
+};
+
+// ---------------------------------------------------------------- Lyrics
+// Spotify-style lyrics for what the computer is playing (YouTube, Spotify, Music …): the line being sung lit up and
+// kept in view, past lines dimmed, a tap on a line seeks the song there. From lrclib.net, looked up by the phone.
+W.lyrics = {
+  needs: ['state', 'fast'],
+  create(box, { o }) {
+    box.classList.add('ly');
+    const art = document.createElement('img'); art.className = 'ly-art'; art.alt = '';
+    const title = h('b', 'ly-title'), sub = h('span', 'ly-sub');
+    const expand = h('button', 'ly-btn', icon('expand')); expand.type = 'button'; expand.setAttribute('aria-label', 'Full screen');
+    const scroller = h('div', 'ly-lines');
+    const note = h('div', 'ly-note');
+    // the song itself sits under the lyrics: artwork, title, artist, progress and the transport buttons
+    const prog = h('i', 'ly-prog');
+    const tbtn = (glyph, action, label) => {
+      const b = h('button', 'ly-tb ' + action, glyph); b.type = 'button'; b.setAttribute('aria-label', label);
+      b.addEventListener('click', async () => { haptic(); try { const r = await api('/media/' + action, 'POST'); if (r && 'media' in r) setMediaState(r.media); } catch (_) {} });
+      return b;
+    };
+    const play = tbtn('', 'playpause', 'Play / pause');
+    const svg = (d) => { const t = document.createElement('template'); t.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${d}"/></svg>`; return t.content.firstElementChild; };
+    const prevB = tbtn('', 'prev', 'Previous'), nextB = tbtn('', 'next', 'Next');
+    prevB.append(svg('M6 5h2v14H6zM20 5v14L9.5 12z')); nextB.append(svg('M16 5h2v14h-2zM4 5v14l10.5-7z'));
+    const now = h('div', 'ly-now', art, h('div', 'ly-meta', title, sub, h('div', 'ly-track', prog)), prevB, play, nextB);
+    box.append(h('div', 'ly-head', h('span', 'ly-label', 'Lyrics'), expand), scroller, note, now);
+    expand.addEventListener('click', () => { haptic(); box.classList.toggle('ly-full'); document.body.classList.toggle('rm-fullscreen', box.classList.contains('ly-full')); });
+    let key = null, lines = null, els = [], shown = -2, artId = -1, userAt = 0;
+    scroller.addEventListener('scroll', () => { if (!scroller._auto) userAt = Date.now(); scroller._auto = false; }, { passive: true });
+    const say = (text) => { note.textContent = text || ''; note.hidden = !text; };
+    const render = (l, m) => {
+      shown = -2; els = [];
+      if (!l) { scroller.replaceChildren(); say('No lyrics found for this song'); return; }
+      if (l.instrumental) { scroller.replaceChildren(); say('♪ Instrumental'); return; }
+      say('');
+      if (l.synced?.length) {
+        lines = l.synced;
+        els = lines.map((x) => {
+          const e = h('p', 'ly-l' + (x.text ? '' : ' gap'), x.text || '♪');
+          e.addEventListener('click', async () => {
+            if (!m.canSeek && !media?.canSeek) return;
+            haptic();
+            try { await api('/media/seek?ms=' + x.at, 'POST'); if (media) { media.posMs = x.at; media.at = performance.now(); } userAt = 0; } catch (_) {}
+          });
+          return e;
+        });
+        scroller.replaceChildren(h('div', 'ly-pad'), ...els, h('div', 'ly-pad'));
+        scroller.classList.remove('plain');
+      } else {
+        lines = null;
+        scroller.replaceChildren(...String(l.plain).split('\n').map((t) => h('p', 'ly-l plain', t || ' ')));
+        scroller.classList.add('plain');
+      }
+    };
+    const follow = (i) => {
+      if (i === shown) return;
+      els[shown]?.classList.remove('now');
+      els.forEach((e, k) => e.classList.toggle('past', k < i));
+      els[i]?.classList.add('now');
+      shown = i;
+      if (Date.now() - userAt < 4000 || !els[i]) return; // the user is reading ahead: leave the scroll alone
+      scroller._auto = true;
+      scroller.scrollTo({ top: els[i].offsetTop - scroller.clientHeight * 0.38, behavior: 'smooth' });
+    };
+    return {
+      async update(kind) {
+        const m = media;
+        if (kind === 'fast') {
+          if (m && m.durMs > 0) prog.style.width = Math.min(100, (100 * (m.posMs + (m.playing ? performance.now() - m.at : 0))) / m.durMs) + '%';
+          if (m) play.replaceChildren(svg(m.playing ? 'M7 5h4v14H7zM13 5h4v14h-4z' : 'M8 5v14l11-7z'));
+          if (m && lines && els.length) follow(lineAt(lines, Math.min(m.durMs || Infinity, m.posMs + (m.playing ? performance.now() - m.at : 0))));
+          return;
+        }
+        if (!m?.title) {
+          if (key !== '') { key = ''; lines = null; scroller.replaceChildren(); title.textContent = 'Nothing playing'; sub.textContent = ''; art.removeAttribute('src'); say('Play a song on the computer to see its lyrics'); }
+          return;
+        }
+        if (m.artId && m.artId !== artId) { artId = m.artId; art.src = `${API}/art?id=${m.artId}`; }
+        const k = `${m.artist}|${m.title}`;
+        if (k === key) return;
+        key = k; lines = null;
+        title.textContent = m.title; sub.textContent = [m.artist, m.app].filter(Boolean).join(' · ');
+        scroller.replaceChildren(); say('Looking for lyrics…');
+        const l = await lyricsFor(m);
+        if (key === k) render(l, m);
+      },
+      destroy() { document.body.classList.remove('rm-fullscreen'); },
     };
   },
 };

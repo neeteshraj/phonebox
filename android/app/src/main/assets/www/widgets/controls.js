@@ -1283,7 +1283,14 @@ W.remote = {
     img.className = 'rm-screen'; img.alt = '';
     const msg = h('div', 'rm-msg');
     const ring = h('i', 'rm-tap');
-    stage.append(img, ring, msg);
+    // off until asked for: nothing is captured on the computer or decoded on the phone until Start is tapped
+    const startBtn = h('button', 'rm-start-btn', icon('monitor'), 'Start screen sharing');
+    startBtn.type = 'button';
+    const startCard = h('div', 'rm-start', h('div', 'rm-start-ic', icon('monitor')), h('b', null, 'Remote desktop'),
+      h('span', null, 'See and control your computer from here. It stays off — and uses no memory — until you start it, and stops when you leave this page.'), startBtn);
+    // a swipe starting at the left or right edge turns the page even while the screen takes every other touch
+    const edgeL = h('div', 'rm-edge l'), edgeR = h('div', 'rm-edge r');
+    stage.append(img, ring, msg, startCard);
     const kbd = document.createElement('input');
     kbd.className = 'rm-kbd'; kbd.autocapitalize = 'off'; kbd.autocomplete = 'off'; kbd.spellcheck = false; kbd.setAttribute('aria-label', 'Type on the Mac');
     const screens = h('div', 'rm-screens');
@@ -1303,12 +1310,21 @@ W.remote = {
       btn('keyboard', 'Keyboard', () => { kbd.focus(); }),
       btn('command', 'Special keys', (b) => { keysRow.hidden = !keysRow.hidden; b.classList.toggle('on', !keysRow.hidden); }),
       btn('hd', 'Quality', (b) => { hd = !hd; b.classList.toggle('on', hd); since = 0; }, 'on'),
+      btn('stop', 'Stop', () => stop()),
       btn('expand', 'Full screen', (b) => { box.classList.toggle('rm-full'); document.body.classList.toggle('rm-fullscreen', box.classList.contains('rm-full')); b.classList.toggle('on'); fit(); }),
       fps);
-    box.append(stage, keysRow, bar, kbd);
+    box.append(stage, keysRow, bar, kbd, edgeL, edgeR); // the edges sit outside the stage, which takes every touch
 
     // ---- state
-    let info = null, display = null, since = 0, running = false, visible = false, frames = 0, fpsAt = performance.now(), lastUrl = '';
+    let info = null, display = null, since = 0, running = false, visible = false, on = false, frames = 0, fpsAt = performance.now(), lastUrl = '';
+    const setOn = (v) => {
+      on = v;
+      box.classList.toggle('rm-on', on);
+      startCard.hidden = on;
+      if (!on) { if (lastUrl) { URL.revokeObjectURL(lastUrl); lastUrl = ''; } img.removeAttribute('src'); fps.textContent = ''; box.classList.remove('rm-full'); document.body.classList.remove('rm-fullscreen'); say(''); }
+    };
+    const stop = () => setOn(false);
+    startBtn.addEventListener('click', () => { haptic(); setOn(true); say('Connecting…'); loadInfo(); });
     let zoom = 1, panX = 0, panY = 0;
     const say = (text, hint = '') => { msg.replaceChildren(...(text ? [h('b', null, text), hint ? h('span', null, hint) : ''] : [])); msg.hidden = !text; };
     const post = (q) => fetch(`${API}/remote/input?${q}`, { method: 'POST', headers: PANEL_HEADERS }).then(async (r) => {
@@ -1320,7 +1336,7 @@ W.remote = {
     const loop = async () => {
       if (running) return;
       running = true;
-      while (visible && display) {
+      while (visible && on && display) {
         const w = Math.min(2560, Math.round(stage.clientWidth * (window.devicePixelRatio || 1) * (hd ? 1 : 0.6)));
         try {
           const r = await fetch(`${API}/remote/frame?display=${encodeURIComponent(display.id)}&w=${Math.max(320, w)}&q=${hd ? 70 : 45}&since=${since}`, { headers: PANEL_HEADERS, cache: 'no-store' });
@@ -1345,7 +1361,11 @@ W.remote = {
       }
       running = false;
     };
-    new IntersectionObserver(([e]) => { visible = e.isIntersecting && e.intersectionRatio > 0.6; if (visible) loop(); }, { threshold: [0, 0.6, 1] }).observe(box);
+    new IntersectionObserver(([e]) => {
+      visible = e.isIntersecting && e.intersectionRatio > 0.6;
+      if (!visible && on) setOn(false); // leaving the page stops the stream (the computer stops capturing too)
+      if (visible && on) loop();
+    }, { threshold: [0, 0.6, 1] }).observe(box);
 
     // ---- where the picture sits (contain, then the zoom and pan)
     const rect = () => {
@@ -1378,6 +1398,8 @@ W.remote = {
     const pts = new Map();
     let mode = null, start = null, pressTimer = 0, lastTap = null, tapTimer = 0, moveAt = 0, pinch0 = null, scrollY0 = 0, scrollX0 = 0;
     stage.addEventListener('pointerdown', (e) => {
+      // gestures only while streaming, and never for a button on top (capturing would steal its click)
+      if (!on || e.target.closest('button')) return;
       stage.setPointerCapture(e.pointerId);
       pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (pts.size === 1) {
@@ -1476,18 +1498,19 @@ W.remote = {
         info = await api('/remote/info');
         if (!display || !info.displays?.some((d) => d.id === display.id)) display = info.displays?.find((d) => d.main) || info.displays?.[0] || null;
         drawScreens();
-        if (!info.enabled) say('Remote desktop is off', 'Turn on “Let the phone view and control this computer” in the computer’s PhoneBox Settings.');
+        if (!on) { /* the start card is up */ }
+        else if (!info.enabled) say('Remote desktop is off', 'Turn on “Let the phone view and control this computer” in the computer’s PhoneBox Settings.');
         else if (!info.screenPermission) say('PhoneBox may not see the screen yet', 'Allow PhoneBoxAgent in System Settings › Privacy & Security › Screen Recording, then restart PhoneBox.');
-        else if (!lastUrl) say('Connecting…');
+        else if (!lastUrl && on) say('Connecting…');
         box.classList.toggle('rm-viewonly', info.enabled && !info.inputPermission);
-        if (visible) loop();
-      } catch (_) { say('The computer is not reachable'); }
+        if (visible && on) loop();
+      } catch (_) { if (on) say('The computer is not reachable'); }
     };
-    say('Connecting…');
+    setOn(false);
     loadInfo();
     let infoAt = Date.now();
     return {
-      update() { if (Date.now() - infoAt > 5000) { infoAt = Date.now(); loadInfo(); } },
+      update() { if (on && Date.now() - infoAt > 5000) { infoAt = Date.now(); loadInfo(); } },
       destroy() { visible = false; if (lastUrl) URL.revokeObjectURL(lastUrl); document.body.classList.remove('rm-fullscreen'); },
     };
   },
