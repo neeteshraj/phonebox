@@ -289,6 +289,8 @@ export function sizeCanvas(c) {
 }
 
 /** Draws series as area charts. series: [{ data, color, max }] */
+// opts: grid (four guide lines), smooth (curves instead of a polyline), dot (a glowing dot on the newest value),
+// labels (fn(fraction) -> text, drawn on the guide lines at the right edge)
 export function chart(canvas, series, opts = {}) {
   if (!canvas.clientWidth) return;
   const [g, w, hh, dpr] = sizeCanvas(canvas);
@@ -297,9 +299,11 @@ export function chart(canvas, series, opts = {}) {
   if (opts.grid && !bold) {
     g.strokeStyle = 'rgba(255,255,255,0.06)';
     g.lineWidth = 1;
+    if (opts.labels) g.setLineDash([3 * dpr, 4 * dpr]);
     for (let i = 1; i < 4; i++) { const y = Math.round((hh * i) / 4) + 0.5; g.beginPath(); g.moveTo(0, y); g.lineTo(w, y); g.stroke(); }
+    g.setLineDash([]);
   }
-  const top = 4 * dpr;
+  const top = (opts.dot ? 8 : 4) * dpr;
   for (const s of series) {
     const d = s.data;
     if (d.length < 2) continue;
@@ -309,8 +313,12 @@ export function chart(canvas, series, opts = {}) {
     const y = (v) => hh - (Math.min(v, max) / max) * (hh - top);
     g.beginPath();
     g.moveTo(x0, y(d[0]));
-    for (let i = 1; i < d.length; i++) g.lineTo(x0 + i * step, y(d[i]));
-    g.lineWidth = (bold ? 2.6 : 1.6) * dpr;
+    for (let i = 1; i < d.length; i++) {
+      const x = x0 + i * step;
+      if (opts.smooth) { const px = x - step, mx = px + step / 2; g.bezierCurveTo(mx, y(d[i - 1]), mx, y(d[i]), x, y(d[i])); }
+      else g.lineTo(x, y(d[i]));
+    }
+    g.lineWidth = (bold ? 2.6 : opts.smooth ? 2 : 1.6) * dpr;
     g.strokeStyle = s.color;
     g.lineJoin = 'round';
     g.lineCap = 'round';
@@ -323,6 +331,25 @@ export function chart(canvas, series, opts = {}) {
     grad.addColorStop(1, s.color + '00');
     g.fillStyle = grad;
     g.fill();
+    if (opts.dot) {
+      const cx = w - 5 * dpr, cy = y(d[d.length - 1]);
+      g.fillStyle = s.color + '40'; g.beginPath(); g.arc(cx, cy, 7 * dpr, 0, Math.PI * 2); g.fill();
+      g.fillStyle = s.color; g.beginPath(); g.arc(cx, cy, 3.5 * dpr, 0, Math.PI * 2); g.fill();
+    }
+  }
+  if (opts.labels) {
+    g.font = `${10.5 * dpr}px ${getComputedStyle(canvas).fontFamily}`;
+    g.fillStyle = 'rgba(161,161,170,.75)';
+    g.textAlign = 'left'; // on the left: the newest data is on the right
+    g.textBaseline = 'bottom';
+    g.strokeStyle = 'rgba(9,9,11,.85)'; // a dark outline keeps a label readable over the lines
+    g.lineWidth = 3 * dpr;
+    g.lineJoin = 'round';
+    for (let i = 1; i < 4; i++) {
+      const tx = opts.labels(1 - i / 4), ty = Math.round((hh * i) / 4) - 3 * dpr;
+      g.strokeText(tx, 12 * dpr, ty);
+      g.fillText(tx, 12 * dpr, ty);
+    }
   }
 }
 

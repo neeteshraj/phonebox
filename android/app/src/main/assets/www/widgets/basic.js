@@ -1,4 +1,4 @@
-import { bridge, runListeners, sessionRuns, monogramColor, sheetDrag, $, API, D, LEVEL_COLOR, LOCALE, mediaHtml, METRICS, PANEL_HEADERS, PREVIEW, Q_STYLE, S_ORDER, ago, api, averageColor, buildLayout, buzz, cfg, cfgVersion, chart, color, cssVar, currentProcessesSort, emit, fillIcon, fmtClock, fmtDur, fmtHM, fmtMem, fmtReset, fmtTime, fmtValue, gotoProcesses, gpuMem, gpusOf, h, en, haptic, hasProcessesPage, hist, hour12, icon, keyButton, levelOf, media, metricText, online, openSheet, paceInfo, pad, prRow, pushView, quotaProviders, r1, registerProcessesSorter, renderStatus, ringSvg, setArtColor, configMark, configReadSince, localWriteStored, setMediaState, setVolDragging, shortDur, shortGpu, store, t, tick, toast, volDragging, wxBlock, wxDeg, wxIcon } from '../main.js';
+import { bridge, runListeners, sessionRuns, monogramColor, sheetDrag, $, API, D, LEVEL_COLOR, LOCALE, mediaHtml, METRICS, PANEL_HEADERS, PREVIEW, Q_STYLE, S_ORDER, ago, api, averageColor, buildLayout, buzz, cfg, cfgVersion, chart, color, cssVar, currentProcessesSort, emit, fillIcon, fmtClock, fmtDur, fmtHM, fmtMem, fmtReset, fmtTime, fmtValue, gotoProcesses, gpuMem, gpusOf, h, en, haptic, hasProcessesPage, hist, hour12, icon, keyButton, levelOf, media, metricText, online, openSheet, paceInfo, pad, prRow, pushView, quotaProviders, r1, rateStr, registerProcessesSorter, renderStatus, ringSvg, setArtColor, configMark, configReadSince, localWriteStored, setMediaState, setVolDragging, shortDur, shortGpu, store, t, tick, toast, volDragging, wxBlock, wxDeg, wxIcon } from '../main.js';
 import { W } from '../registry.js';
 import { dictateInto, stopDictation } from './dictate.js';
 import { lyricsFor, lineAt } from './lyrics.js';
@@ -529,27 +529,44 @@ W.chart = {
     const head = h('div', 's-head', h('span', 's-label', label), h('span', 's-name', ''));
     const main = h('div', 's-main');
     const canvas = h('canvas');
+    box.classList.add('ch');
     box.append(head, main, canvas);
     if (keys.includes('cpu') || keys.includes('ram')) bindProcessLink(box, keys.includes('cpu') ? 'cpu' : 'mem');
     return {
       update() {
         const s = D.state;
         if (!s) return;
+        // the window's average and peak, from the same history the chart draws
+        const stats = (k) => {
+          const d = hist[METRICS[k].hist || k] || [];
+          return d.length ? { avg: d.reduce((a, x) => a + x, 0) / d.length, peak: Math.max(...d) } : null;
+        };
+        const fmtV = (mm, v) => mm.rate ? rateStr(v) : mm.fmt ? mm.fmt(v) + ' ' + mm.unit : Math.round(v) + mm.unit;
         if (single) {
           const [v, u] = metricText(single, s);
-          main.replaceChildren(h('b', null, v), h('small', null, u), h('span', 'chips', single.sub?.(s) ? h('span', 'chip', single.sub(s)) : ''));
-          head.lastChild.textContent = single.title?.(s) || '';
+          const st = stats(keys[0]);
+          const sub = single.sub?.(s), title = single.title?.(s) || '';
+          main.replaceChildren(h('b', null, v), h('small', null, u),
+            h('span', 'ch-stats',
+              sub && sub !== title ? h('span', 'ch-chip', sub) : null,
+              st ? h('span', 'ch-stat', h('small', null, 'Avg'), h('b', null, fmtV(single, st.avg))) : null,
+              st ? h('span', 'ch-stat', h('small', null, 'Peak'), h('b', null, fmtV(single, st.peak))) : null));
+          head.lastChild.textContent = title;
         } else {
           main.replaceChildren(...keys.map((k) => {
             const mm = METRICS[k];
             const [v, u] = metricText(mm, s);
-            const e = h('span', 'multi', (k === 'down' ? '↓ ' : k === 'up' ? '↑ ' : mm.label + ' '), h('b', null, v + ' ' + u));
-            e.style.color = color(mm.color);
+            const st = stats(k);
+            const e = h('span', 'multi ch-multi', h('span', 'ch-mtop', h('i', 'ch-key'), h('span', 'ch-mlabel', k === 'down' ? 'Download' : k === 'up' ? 'Upload' : mm.name)),
+              h('b', null, v + ' ' + u), st ? h('small', null, 'peak ' + fmtV(mm, st.peak)) : null);
+            e.style.setProperty('--k', color(mm.color));
             return e;
           }));
           head.lastChild.textContent = isNet && s.ping ? `Ping ${s.ping.ms != null ? Math.round(s.ping.ms) + ' ms' : '—'} · loss ${s.ping.lossPct}%` : '';
         }
-        chart(canvas, keys.map((k) => ({ data: hist[METRICS[k].hist || k], color: color(METRICS[k].color), max: METRICS[k].max(s) })), { grid: true });
+        const max0 = METRICS[keys[0]].max(s), m0 = METRICS[keys[0]];
+        chart(canvas, keys.map((k) => ({ data: hist[METRICS[k].hist || k], color: color(METRICS[k].color), max: METRICS[k].max(s) })),
+          { grid: true, smooth: true, dot: true, labels: (f) => m0.rate ? rateStr(max0 * f) : m0.unit === '%' ? Math.round(max0 * f) + '%' : r1(max0 * f) + ' ' + m0.unit });
       },
     };
   },
@@ -559,13 +576,21 @@ W.meters = {
   needs: ['state'],
   create(box) {
     box.style.setProperty('--c', cssVar('--ram'));
-    const up = h('span', 's-name');
+    box.classList.add('mx');
+    const up = h('span', 's-name mx-up');
+    const hero = h('div', 'mx-hero');
     const list = h('div', 'meters');
-    box.append(h('div', 's-head', h('span', 's-label', t('w.memory')), up), list);
+    box.append(h('div', 's-head', h('span', 's-label', t('w.memory')), up), hero, list);
     bindProcessLink(box, 'mem');
-    const meter = (name, txt, pct, c) => {
-      const e = h('div', 'meter', h('div', 'm-row', h('span', null, name), h('span', null, txt)), h('div', 'track', h('i')));
-      e.querySelector('i').style.width = Math.min(100, pct) + '%';
+    const level = (pct) => pct >= 90 ? 'hot' : pct >= 75 ? 'warm' : '';
+    // a row: name, used of total, a bar, and what is left
+    const meter = (name, used, total, unit, c, leftText) => {
+      const pct = total ? Math.min(100, (used / total) * 100) : 0;
+      const e = h('div', 'meter mx-row ' + level(pct),
+        h('div', 'm-row', h('span', null, name), h('span', null, h('b', null, `${r1(used)}`), ` / ${Math.round(total)} ${unit}`)),
+        h('div', 'track', h('i')));
+      e.title = `${Math.round(pct)}% used · ${leftText}`;
+      e.querySelector('i').style.width = pct + '%';
       if (c) e.style.setProperty('--c', c);
       return e;
     };
@@ -575,15 +600,24 @@ W.meters = {
         if (!pc) return;
         const s = pc.uptimeSec, d = Math.floor(s / 86400), hr = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
         up.textContent = 'Up ' + (d ? `${d} d ${hr} h` : hr ? `${hr} h ${m} min` : `${m} min`);
-        const rows = [meter('RAM', `${r1(pc.ramUsedGb)} / ${Math.round(pc.ramTotalGb)} GB`, (pc.ramUsedGb / pc.ramTotalGb) * 100)];
+        // RAM is the headline: how much is in use, of how much, and a thick bar
+        const pct = pc.ramTotalGb ? (pc.ramUsedGb / pc.ramTotalGb) * 100 : 0;
+        const bar = h('div', 'mx-bar', h('i'));
+        bar.firstChild.style.width = Math.min(100, pct) + '%';
+        hero.className = 'mx-hero ' + level(pct);
+        hero.replaceChildren(h('div', 'mx-big', h('b', null, r1(pc.ramUsedGb)),
+          h('small', null, `/ ${Math.round(pc.ramTotalGb)} GB RAM · ${r1(Math.max(0, pc.ramTotalGb - pc.ramUsedGb))} GB free`),
+          h('span', 'mx-pill', pct >= 90 ? `${Math.round(pct)}% · pressure` : Math.round(pct) + '%')), bar);
+        const rows = [];
         // one row per GPU (the integrated one counts its shared memory); named once there is more than one
         const gpus = gpusOf(D.state);
         for (const g of gpus) {
-          const m = gpuMem(g);
-          if (m) rows.push(meter(gpus.length > 1 ? `${m.label === 'VRAM' ? 'VRAM' : 'GPU'} · ${shortGpu(g.name)}` : m.label === 'VRAM' ? 'VRAM' : 'GPU MEMORY',
-            `${r1(m.used)} / ${Math.round(m.total)} GB`, (m.used / m.total) * 100, cssVar('--gpu')));
+          const mm = gpuMem(g);
+          if (mm) rows.push(meter(gpus.length > 1 ? `${mm.label === 'VRAM' ? 'VRAM' : 'GPU'} · ${shortGpu(g.name)}` : mm.label === 'VRAM' ? 'Video memory' : 'GPU memory',
+            mm.used, mm.total, 'GB', cssVar('--gpu'), `${r1(Math.max(0, mm.total - mm.used))} GB free`));
         }
-        const disks = h('div', 'disks', ...(pc.disks || []).map((dk) => meter(dk.name === '/' ? 'DISK' : dk.name, Math.round((dk.usedGb / dk.totalGb) * 100) + '%', (dk.usedGb / dk.totalGb) * 100, '#94a3b8')));
+        const disks = h('div', 'disks', ...(pc.disks || []).map((dk) => meter(dk.name === '/' ? 'Disk' : dk.name, dk.usedGb, dk.totalGb, 'GB', '#94a3b8',
+          `${Math.round(dk.totalGb - dk.usedGb)} GB free`)));
         list.replaceChildren(...rows, disks);
       },
     };
