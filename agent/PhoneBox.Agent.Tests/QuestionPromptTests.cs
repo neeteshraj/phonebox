@@ -118,4 +118,43 @@ public sealed class QuestionPromptTests
             Directory.Delete(dir, true);
         }
     }
+
+    [Fact]
+    public async Task ASingleChoiceQuestionIsAnsweredFromThePhoneWithTheLabelOrTypedText()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "phonebox-qa-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var cfgPath = Path.Combine(dir, "config.json");
+        File.WriteAllText(cfgPath, """{"claude":{"phoneApprovals":true,"onlyWhenAway":false,"timeoutSec":30}}""");
+        var cfg = new ConfigStore(cfgPath);
+        using var push = new PushStore(NullLogger<PushStore>.Instance, Path.Combine(dir, "push.json"));
+        var approvals = new ApprovalStore(push, NullLogger<ApprovalStore>.Instance);
+        var sessions = new SessionMonitor(NullLogger<SessionMonitor>.Instance);
+        Interlocked.Exchange(ref ApprovalStore.PhoneLastSeen, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        const string one = """{"tool_name":"AskUserQuestion","session_id":"s","tool_input":{"questions":[{"header":"UI","question":"Which framework?","multiSelect":false,"options":[{"label":"React","description":"Components"},{"label":"Vue","description":""}]}]}}""";
+
+        async Task<JsonElement> Answer(string decision, string value)
+        {
+            var hook = ClaudeHook.HandleAsync(Json(one), cfg, approvals, sessions, CancellationToken.None);
+            var card = Assert.Single(approvals.Snapshot());
+            Assert.Equal(["React", "Vue"], card.Options!.Select(o => o.Label));
+            Assert.True(card.Custom);
+            Assert.False(approvals.Decide(card.Id, "skip")); // a card with answers to pick does not end with "Got it"
+            Assert.True(approvals.Decide(card.Id, decision, value));
+            return JsonSerializer.SerializeToElement(await hook);
+        }
+
+        var picked = (await Answer("answer", "Vue")).GetProperty("hookSpecificOutput").GetProperty("decision");
+        Assert.Equal("allow", picked.GetProperty("behavior").GetString());
+        var input = picked.GetProperty("updatedInput");
+        Assert.Equal("Vue", input.GetProperty("answers").GetProperty("Which framework?").GetString());
+        Assert.Equal("React", input.GetProperty("questions")[0].GetProperty("options")[0].GetProperty("label").GetString()); // passed back unchanged
+
+        var typed = (await Answer("answer", "  Svelte, please  ")).GetProperty("hookSpecificOutput").GetProperty("decision").GetProperty("updatedInput");
+        Assert.Equal("Svelte, please", typed.GetProperty("answers").GetProperty("Which framework?").GetString());
+
+        // several questions, or a multi-select: no buttons, answered in the terminal as before
+        Assert.Null(ClaudeHook.Answerable(Json("""{"questions":[{"question":"A?","options":[{"label":"x"}]},{"question":"B?","options":[{"label":"y"}]}]}""")));
+        Assert.Null(ClaudeHook.Answerable(Json("""{"questions":[{"question":"A?","multiSelect":true,"options":[{"label":"x"}]}]}""")));
+    }
 }

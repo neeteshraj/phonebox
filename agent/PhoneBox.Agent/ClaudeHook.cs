@@ -39,8 +39,54 @@ public static class ClaudeHook
         if (c.OnlyWhenAway && Idle.Seconds() < 60) { approvals.Skipped(source, "the computer is in use (Only when I am away)"); return null; }
         var decision = await DecideAsync(input, cfg, approvals, sessions, aborted, source, sessionPrefix, allowQuestions);
         if (decision is null) return null;
+        if (decision.StartsWith(AnswerPrefix, StringComparison.Ordinal)) return AnswerOutput(ti, decision[AnswerPrefix.Length..]);
         if (decision == "allow-session") approvals.AllowForSession(sessionId, tool, rule);
         return Output(decision, tool, rule);
+    }
+
+    /// <summary>What <see cref="DecideAsync"/> returns for a question answered on the phone: this prefix, then the answer.</summary>
+    internal const string AnswerPrefix = "answer:";
+
+    /// <summary>
+    /// The one question of an AskUserQuestion that the phone can answer: a single question, single choice, with options.
+    /// Its options become the card's buttons (the label is the value Claude expects back), and a typed answer is
+    /// accepted too, as the terminal's "Other" would be. Null for several questions or a multi-select: those are
+    /// answered in the terminal as before.
+    /// </summary>
+    internal static (string Question, ApprovalOption[] Options)? Answerable(JsonElement ti)
+    {
+        if (ti.ValueKind != JsonValueKind.Object || !ti.TryGetProperty("questions", out var qs) || qs.ValueKind != JsonValueKind.Array
+            || qs.GetArrayLength() != 1) return null;
+        var q = qs[0];
+        if (q.ValueKind != JsonValueKind.Object || Str(q, "question") is not { Length: > 0 } text) return null;
+        if (q.TryGetProperty("multiSelect", out var m) && m.ValueKind == JsonValueKind.True) return null;
+        if (!q.TryGetProperty("options", out var os) || os.ValueKind != JsonValueKind.Array) return null;
+        var options = os.EnumerateArray().Where(o => o.ValueKind == JsonValueKind.Object && Str(o, "label") is { Length: > 0 })
+            .Take(8).Select(o => new ApprovalOption(Str(o, "label")!, Str(o, "label")!, Str(o, "description"))).ToArray();
+        return options.Length > 0 ? (text, options) : null;
+    }
+
+    /// <summary>
+    /// The hook's answer to an AskUserQuestion: allow, with <c>updatedInput</c> carrying the original questions and
+    /// <c>answers</c> (question text → the chosen label, or the typed text). Claude Code needs updatedInput paired with
+    /// allow for this tool; updatedInput replaces the whole input, so the questions are passed back unchanged.
+    /// </summary>
+    internal static object? AnswerOutput(JsonElement ti, string answer)
+    {
+        if (Answerable(ti) is not { } a) return null;
+        var questions = JsonNode.Parse(ti.GetProperty("questions").GetRawText());
+        return new
+        {
+            hookSpecificOutput = new
+            {
+                hookEventName = "PermissionRequest",
+                decision = new
+                {
+                    behavior = "allow",
+                    updatedInput = new Dictionary<string, object?> { ["questions"] = questions, ["answers"] = new Dictionary<string, string> { [a.Question] = answer } },
+                },
+            },
+        };
     }
 
     /// <summary>
@@ -138,12 +184,15 @@ public static class ClaudeHook
         // AskUserQuestion is a question, not a permission: Allow would only open the same question in the terminal.
         var question = allowQuestions && tool == "AskUserQuestion";
         var shownCwd = cwd.Length <= 1000 ? cwd : "…" + cwd[^999..];
+        var answerable = question ? Answerable(ti) : null;
         var a = new Approval(ApprovalStore.NewId(), source, sessionId, project, shownCwd, ToolTitle(tool), question ? QuestionDetail(ti) : Detail(tool, ti),
             ti.ValueKind == JsonValueKind.Object ? Str(ti, "description") : null, now, now + Math.Clamp(c.TimeoutSec, 10, 3600) * 1000L,
-            question ? "question" : "permission", Diff: question ? null : BuildDiff(tool, ti));
+            question ? "question" : "permission", Options: answerable?.Options, Custom: answerable is not null,
+            Diff: question ? null : BuildDiff(tool, ti));
 
         var decision = await approvals.AskAsync(a, aborted);
-        // "skip" and an OpenCode-style typed answer ("answer") have no hook equivalent: no decision here
+        // a question card takes only an answer or "skip" (ApprovalStore.Decide): anything else from it is the answer
+        if (question) return answerable is not null && decision is { Length: > 0 } and not "skip" ? AnswerPrefix + decision : null;
         return decision is "allow" or "always" or "deny" or "allow-session" ? decision : null;
     }
 

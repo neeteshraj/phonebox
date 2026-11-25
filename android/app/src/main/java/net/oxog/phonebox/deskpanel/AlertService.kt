@@ -174,7 +174,9 @@ class AlertService : Service() {
             .apply { if (Build.VERSION.SDK_INT < 26) @Suppress("DEPRECATION") setPriority(Notification.PRIORITY_HIGH) }
             .setDefaults(Notification.DEFAULT_ALL)
         if (question) {
-            b.addAction(action(R.string.alert_got_it, AlertActionReceiver.decide(this, id, "skip")))
+            // a question with answers to pick is answered in the panel; "Got it" only ends one asked in the terminal
+            if ((a.optJSONArray("options")?.length() ?: 0) == 0 && !a.optBoolean("custom"))
+                b.addAction(action(R.string.alert_got_it, AlertActionReceiver.decide(this, id, "skip")))
             b.addAction(action(R.string.alert_open, openPanel()))
         } else {
             b.addAction(action(R.string.alert_deny, AlertActionReceiver.decide(this, id, "deny")))
