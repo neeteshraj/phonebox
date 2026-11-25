@@ -721,3 +721,16 @@ test('the agents card shows only the agents at work, folds the idle ones behind 
   await expect(page.locator('.us-ticks span')).toHaveCount(5);
   await expect(page.locator('.us-bar')).toHaveCount(7);
 });
+
+test('a quota provider unused for over a month and with no limits is left out', async ({ page }) => {
+  await page.goto('/panel/');
+  const ids = await page.evaluate(async () => {
+    const m = await import('/panel/main.js');
+    m.D.quotas = { providers: [
+      { id: 'claude', updatedAt: Date.now() - 6e4, limits: [{ label: '5-hour', percent: 5 }] },
+      { id: 'codex', updatedAt: Date.now() - 135 * 864e5, limits: [] },
+      { id: 'old-but-limited', updatedAt: Date.now() - 135 * 864e5, limits: [{ label: 'Weekly', percent: 1 }] }] };
+    return m.quotaProviders().map((p) => p.id);
+  });
+  expect(ids).toEqual(['claude', 'old-but-limited']);
+});

@@ -558,7 +558,11 @@ export function phoneBattery() {
   try { const b = JSON.parse(bridge.battery()); return batteryChip(b.level, b.plugged); } catch (_) { return ''; }
 }
 
-export function quotaProviders() { return D.quotas?.providers || []; }
+// a provider not used for a month (its newest data older than that, and no limits to show) is left out everywhere
+const STALE_QUOTA = 30 * 864e5;
+export function quotaProviders() {
+  return (D.quotas?.providers || []).filter((p) => p.limits?.length || !p.updatedAt || Date.now() - p.updatedAt < STALE_QUOTA);
+}
 
 /** "Niteshs-MacBook-Pro.local" -> "Niteshs MacBook Pro": a computer name reads like a name, not a host. */
 export const prettyHost = (n) => String(n || 'PC').replace(/\.local$/i, '').replace(/[-_]+/g, ' ').trim() || 'PC';
