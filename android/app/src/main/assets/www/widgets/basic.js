@@ -817,13 +817,34 @@ W.codexbar = W.quotas;
 W.sessions = {
   needs: ['work', 'tick'],
   create(box) {
-    const sum = h('span', 'w-sum');
+    const sum = h('span', 'w-sum ai-sum');
     const list = h('div', 's-list', h('div', 'empty', t('sess.waitingData')));
     const add = h('button', 'mini-btn sess-new', '+ New');
     add.type = 'button';
     add.addEventListener('click', () => openNewSession());
-    box.append(h('div', 'w-head', h('span', 's-label', t('w.sessions')), sum, add), list);
+    // only the agents at work (and ones that just finished, to reply to) are cards; the idle rest fold behind this
+    const more = h('button', 'mini-btn ai-more');
+    more.type = 'button';
+    let showIdle = store.get('sess-idle', false);
+    more.addEventListener('click', () => { haptic(); showIdle = !showIdle; store.set('sess-idle', showIdle); draw(); });
+    box.append(h('div', 'w-head', h('span', 's-label', t('w.sessions')), sum, more, add), list);
     box.style.setProperty('--c', '#d97757');
+    box.classList.add('ai');
+    // Claude sessions' model, tokens and context come from the usage reader (/api/usage "sessions")
+    let usage = new Map(), usageAt = 0;
+    const loadUsage = async () => {
+      if (Date.now() - usageAt < 30_000) return;
+      usageAt = Date.now();
+      try { const u = await api('/usage'); usage = new Map((u?.sessions || []).map((x) => ['claude:' + x.id, x])); draw(); } catch (_) {}
+    };
+    const short = (n) => n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'k' : String(n);
+    const TOOL = { claude: 'Claude Code', codex: 'Codex', cursor: 'Cursor' };
+    const RECENT = 10 * 60_000; // a session that finished this recently still counts as active
+    const active = (s) => s.status !== 'idle' || Date.now() - s.since < RECENT;
+    const modelName = (m) => {
+      const x = /^claude-(\w+)-(\d+)-(\d+)/.exec(m || '');
+      return x ? x[1][0].toUpperCase() + x[1].slice(1) + ' ' + x[2] + '.' + x[3] : m || '';
+    };
     const tokens = (n) => n == null ? '—' : n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : String(n);
     const statusText = (s) => s.status === 'busy' ? t('sess.working') : s.status === 'waiting' ? t('sess.waiting') : s.status === 'shell' ? t('sess.shell') : s.outcome === 'completed' ? t('sess.completed') : s.outcome === 'aborted' ? t('sess.aborted') : t('sess.idle');
     const ageText = (since) => Date.now() - since < 60_000 ? 'just now' : shortDur(Date.now() - since) + ' ago';
@@ -875,28 +896,52 @@ W.sessions = {
       close.focus();
       document.addEventListener('keydown', onKey);
     };
+    const stateOf = (s) => s.status === 'busy' ? ['Working', shortDur(Date.now() - (s.turnStartedAt || s.since))]
+      : s.status === 'waiting' ? ['Needs you', shortDur(Date.now() - s.since)]
+      : s.status === 'shell' ? ['Running', shortDur(Date.now() - s.since)]
+      : [s.outcome === 'aborted' ? t('sess.aborted') : 'Done', ageText(s.since)];
+    const card = (s) => {
+      const u = usage.get(s.id);
+      const model = modelName(u?.model || s.model);
+      const tok = u?.tokens ?? s.totalTokens;
+      const facts = s.status === 'waiting' && s.waitingFor ? [s.waitingFor]
+        : [folderOf(s), model, tok != null ? short(tok) : '', u?.context ? short(u.context) + ' ctx' : ''].filter(Boolean);
+      const [label, when] = stateOf(s);
+      const row = h('button', 'sess ai-card ' + s.status + (active(s) ? '' : ' old'),
+        h('span', 'tl ' + s.tool, s.tool === 'claude' ? '✳' : s.tool === 'cursor' ? '◆' : '◎', h('i', 'tl-st')),
+        h('span', 'sess-main',
+          h('span', 'ai-top', h('span', 'nm', titleOf(s)), h('span', 'ai-pill', label)),
+          h('span', 'ai-bot', h('span', 'sess-meta', facts.join(' · ') || TOOL[s.tool] || s.tool), h('small', 'ai-when', when))),
+        s.status === 'busy' || s.status === 'shell' ? h('i', 'ai-run') : null);
+      row.type = 'button';
+      row.addEventListener('click', () => openDetails(s));
+      return row;
+    };
+    const draw = () => {
+      const sessions = D.work?.sessions;
+      if (!sessions) return;
+      const counts = { waiting: 0, busy: 0, shell: 0 };
+      sessions.forEach((s) => (counts[s.status] = (counts[s.status] || 0) + 1));
+      const live = sessions.filter(active), idle = sessions.length - live.length;
+      const chip = (cls, n, text) => n ? h('span', 'ai-chip ' + cls, h('i'), `${n} ${text}`) : null;
+      sum.replaceChildren(...[chip('busy', counts.busy + counts.shell, 'working'), chip('waiting', counts.waiting, 'need you')].filter(Boolean));
+      more.hidden = !idle;
+      more.textContent = showIdle ? 'Hide idle' : `+${idle} idle`;
+      const shown = (showIdle ? sessions : live).slice()
+        .sort((a, b) => (active(b) - active(a)) || (S_ORDER[a.status] ?? 9) - (S_ORDER[b.status] ?? 9) || b.since - a.since);
+      box.classList.toggle('ai-solo', shown.length === 1);
+      if (shown.length) { list.replaceChildren(...shown.map(card)); return; }
+      const start = h('button', 'ai-start', '+ New session');
+      start.type = 'button';
+      start.addEventListener('click', () => openNewSession());
+      list.replaceChildren(h('div', 'ai-empty', h('div', 'ai-empty-ic', h('span', 'tl claude', '✳'), h('span', 'tl codex', '◎')),
+        h('b', null, 'No agents running'), h('span', null, idle ? `${idle} idle ${idle === 1 ? 'session' : 'sessions'} hidden` : 'Start one here or in your terminal'), start));
+    };
     return {
-      update() {
-        const sessions = D.work?.sessions;
-        if (!sessions) return;
-        const counts = { waiting: 0, busy: 0, shell: 0, idle: 0 };
-        sessions.forEach((s) => (counts[s.status] = (counts[s.status] || 0) + 1));
-        sum.textContent = [
-          counts.busy + counts.shell ? `${counts.busy + counts.shell} working` : '',
-          counts.waiting ? `${counts.waiting} waiting` : '',
-          counts.idle ? `${counts.idle} idle` : '',
-        ].filter(Boolean).join(' · ') || t('w.noOpenSessions');
-        const sorted = [...sessions].sort((a, b) => (S_ORDER[a.status] ?? 9) - (S_ORDER[b.status] ?? 9) || b.since - a.since);
-        const rows = sorted.length ? sorted.map((s) => {
-          const row = h('button', 'sess ' + s.status,
-            h('span', 'st'), h('span', 'tl ' + s.tool, s.tool === 'claude' ? '✳' : s.tool === 'cursor' ? '◆' : '◎', h('i', 'tl-st')),
-            h('span', 'sess-main', h('span', 'nm', titleOf(s)), h('span', 'sess-meta', [folderOf(s), [s.model, s.effort].filter(Boolean).join(' · ') || statusText(s)].filter(Boolean).join(' · '))),
-            h('span', 'ds', shortDur(Date.now() - s.since)));
-          row.type = 'button';
-          row.addEventListener('click', () => openDetails(s));
-          return row;
-        }) : [h('div', 'empty', t('w.noAiSessions'))];
-        list.replaceChildren(...rows);
+      update(kind) {
+        loadUsage();
+        if (kind === 'tick' && !box.isConnected) return;
+        draw();
       },
     };
   },
@@ -1547,24 +1592,62 @@ W.usage = {
   needs: ['state'],
   create(box, { o }) {
     box.style.setProperty('--c', '#d97757');
+    box.classList.add('us');
     const head = h('div', 'w-head', h('span', 's-label', o.title || 'Claude usage'), h('span', 'w-sum'));
     const hero = h('div', 'us-hero');
+    // today, hour by hour: an area chart with the peak marked and a dot on the current hour
+    const area = h('div', 'us-area');
+    const ticks = h('div', 'us-ticks');
+    const today = h('div', 'us-today', h('div', 'us-cap', h('span', null, 'Today'), h('b', 'us-peak')), area, ticks);
     const bars = h('div', 'us-bars');
+    const week = h('div', 'us-week', h('div', 'us-cap', h('span', null, 'Last 7 days'), h('b', 'us-wk')), bars);
     const projs = h('div', 'us-projs');
-    box.append(head, hero, bars, projs);
+    box.append(head, hero, today, week, projs);
     let at = 0, busy = false;
+    const gid = 'usg' + Math.random().toString(36).slice(2, 8); // two usage cards must not share a gradient id
     const fmtTok = (n) => n >= 1e9 ? (n / 1e9).toFixed(1) + 'B' : n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'k' : String(n || 0);
     const usd = (v) => v == null ? '' : '$' + (v >= 100 ? Math.round(v).toLocaleString('en-US') : v.toFixed(2));
+    const hourLabel = (hr) => hour12() ? `${hr % 12 || 12}${hr < 12 ? 'a' : 'p'}` : String(hr).padStart(2, '0');
+    const smooth = (pts) => pts.map(([x, y], i) => {
+      if (!i) return `M${x},${y}`;
+      const [px, py] = pts[i - 1], mx = (px + x) / 2;
+      return `C${mx},${py} ${mx},${y} ${x},${y}`;
+    }).join('');
+    const drawArea = (hourly) => {
+      const now = new Date().getHours();
+      const vals = hourly.slice(0, now + 1);
+      const max = Math.max(1, ...vals);
+      const X = (i) => (i / 23) * 100, Y = (v) => 100 - (v / max) * 88;
+      const pts = vals.map((v, i) => [X(i), Y(v)]);
+      const line = smooth(pts);
+      area.innerHTML = `<svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+        <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--c)" stop-opacity=".45"/><stop offset="1" stop-color="var(--c)" stop-opacity="0"/></linearGradient></defs>
+        <path class="us-grid" d="M0,34H100M0,67H100" vector-effect="non-scaling-stroke"/>
+        <path d="${line}L${X(vals.length - 1)},100L0,100Z" fill="url(#${gid})"/>
+        <path class="us-line" d="${line}" vector-effect="non-scaling-stroke"/></svg>`;
+      const peak = vals.indexOf(Math.max(...vals));
+      const dot = h('i', 'us-dot');
+      dot.style.left = X(now) + '%'; dot.style.top = Y(vals[now] || 0) + '%';
+      area.append(dot);
+      box.querySelector('.us-peak').textContent = vals[peak] ? `Peak ${fmtTok(vals[peak])} at ${hourLabel(peak)}` : '';
+      ticks.replaceChildren(...[0, 6, 12, 18, 23].map((hr) => { const e = h('span', null, hourLabel(hr)); e.style.left = X(hr) + '%'; return e; }));
+    };
     const draw = (u) => {
       // the cost is what these tokens would cost at API prices, not what a Claude plan charges
-      head.querySelector('.w-sum').textContent = `This week ${fmtTok(u.week?.tokens)} · ${usd(u.week?.costUsd)}${u.costPartial ? '+' : ''} at API prices`;
-      hero.replaceChildren(h('b', null, fmtTok(u.today?.tokens)), h('span', null, 'tokens today'), h('em', null, usd(u.today?.costUsd)));
+      head.querySelector('.w-sum').textContent = `${usd(u.week?.costUsd)}${u.costPartial ? '+' : ''} this week at API prices`;
+      const top = (u.models || [])[0]?.model;
+      const m = /^claude-(\w+)-(\d+)-(\d+)/.exec(top || '');
+      hero.replaceChildren(h('b', null, fmtTok(u.today?.tokens)), h('span', null, 'tokens today'),
+        h('em', null, usd(u.today?.costUsd)), m ? h('small', 'us-model', m[1][0].toUpperCase() + m[1].slice(1) + ' ' + m[2] + '.' + m[3]) : null);
+      today.hidden = !u.hourly;
+      if (u.hourly) drawArea(u.hourly);
       const days = u.daily || [];
       const max = Math.max(1, ...days.map((d) => d.tokens || 0));
+      box.querySelector('.us-wk').textContent = fmtTok(u.week?.tokens);
       bars.replaceChildren(...days.map((d, i) => {
         const day = new Date(d.date + 'T12:00:00').toLocaleDateString(LOCALE, { weekday: 'narrow' });
         const col = h('div', 'us-bar' + (i === days.length - 1 ? ' today' : ''), h('i'), h('span', null, day));
-        col.querySelector('i').style.height = Math.max(3, (d.tokens / max) * 100) + '%';
+        col.querySelector('i').style.height = Math.max(4, (d.tokens / max) * 100) + '%';
         col.title = `${d.date}: ${fmtTok(d.tokens)} · ${usd(d.costUsd)}`;
         return col;
       }));

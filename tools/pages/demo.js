@@ -175,7 +175,12 @@
     const daily = [1.9, 3.4, 2.2, 4.8, 3.1, 5.6, 2.7].map((m, i) => ({ date: day(6 - i), tokens: Math.round(m * 1e6), costUsd: +(m * 1.9).toFixed(2) }));
     return { today: daily[6], week: { tokens: daily.reduce((a, d) => a + d.tokens, 0), costUsd: +daily.reduce((a, d) => a + d.costUsd, 0).toFixed(2) }, daily,
       projects: [['api-gateway', 9.8e6], ['docs-site', 6.1e6], ['mobile-app', 4.4e6], ['infra', 2.9e6]].map(([name, w]) => ({ name, tokensToday: Math.round(w / 6), tokensWeek: w, costWeekUsd: +(w / 1e6 * 1.9).toFixed(2) })),
-      models: [{ model: 'claude-opus-5-5', tokensWeek: 18e6 }], updatedAt: now() };
+      models: [{ model: 'claude-opus-5-5', tokensWeek: 18e6 }], updatedAt: now(),
+      // a working day: quiet night, a morning push, lunch, a long afternoon
+      hourly: [0, 0, 0, 0, 0, 0, 0, .3, 1.1, 2.4, 3.1, 2.2, .8, 1.6, 3.6, 4.2, 3.3, 2.5, 1.2, .6, .9, .4, 0, 0].map((m) => Math.round(m * 1e5)),
+      // the Claude sessions of work(): model, tokens and context for their cards
+      sessions: [['1', 4.1e6, 142e3], ['2', 1.2e6, 61e3], ['4', 860e3, 38e3], ['5', 2.3e6, 120e3]]
+        .map(([id, tokens, context]) => ({ id, model: 'claude-opus-5-5', tokens, costUsd: +(tokens / 1e6 * 1.9).toFixed(2), lastAt: now() - 6e4, context })) };
   };
   const SAMPLE_PROMPTS = [
     { tool: 'Run a command', detail: 'git push origin main --force-with-lease', description: 'Push the rebased branch', project: 'api-gateway' },

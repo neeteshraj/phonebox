@@ -293,6 +293,41 @@ public sealed class PhoneSessionFeaturesTests : IDisposable
     }
 
     [Fact]
+    public void UsageReportsTodayByHourAndEachRecentSession()
+    {
+        var tz = TimeZoneInfo.Utc;
+        var now = DateTimeOffset.Parse("2026-11-19T12:00:00Z");
+        ClaudeUsage.UsageEntry E(string ts, long tokens, string session, string model = "claude-opus-5-5", long context = 0) =>
+            new(DateTimeOffset.Parse(ts).ToUnixTimeMilliseconds(), model, "p", tokens, 0.5, true, session, context);
+        var r = ClaudeUsage.Aggregate([
+            E("2026-11-19T09:10:00Z", 100, "a", "claude-sonnet-5-5", 10),
+            E("2026-11-19T09:50:00Z", 50, "a", "claude-opus-5-5", 40),   // latest of a: its model and context win
+            E("2026-11-19T11:00:00Z", 7, "b"),
+            E("2026-11-18T23:00:00Z", 9, "b"),                           // yesterday: in b's total, not in today's hours
+            E("2026-11-16T00:00:00Z", 1, "old"),                         // older than 2 days: no session row
+            E("2026-11-19T10:00:00Z", 3, ""),                            // no session id
+        ], now, tz);
+
+        Assert.Equal(24, r.Hourly!.Count);
+        Assert.Equal(150, r.Hourly[9]);
+        Assert.Equal(3, r.Hourly[10]);
+        Assert.Equal(7, r.Hourly[11]);
+        Assert.Equal(["b", "a"], r.Sessions!.Select(s => s.Id));
+        Assert.Equal(new UsageSession("a", "claude-opus-5-5", 150, 1.0, DateTimeOffset.Parse("2026-11-19T09:50:00Z").ToUnixTimeMilliseconds(), 40), r.Sessions[1]);
+        Assert.Equal(16, r.Sessions[0].Tokens);
+    }
+
+    [Fact]
+    public void UsageLineCarriesItsSessionAndContext()
+    {
+        var e = ClaudeUsage.ParseLine(Encoding.UTF8.GetBytes(
+            """{"type":"assistant","sessionId":"s-1","timestamp":"2026-11-19T10:00:00Z","cwd":"/w/p","message":{"id":"m","model":"claude-opus-5-5","usage":{"input_tokens":5,"output_tokens":7,"cache_creation_input_tokens":11,"cache_read_input_tokens":13}}}"""))!.Value.Entry;
+        Assert.Equal("s-1", e.Session);
+        Assert.Equal(29, e.Context);
+        Assert.Equal(36, e.Tokens);
+    }
+
+    [Fact]
     public void UsageReadsIncrementallyAndDedupesMessageIds()
     {
         var root = Directory.CreateDirectory(Path.Combine(_dir, "usage", "proj")).FullName;

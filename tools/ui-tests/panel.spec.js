@@ -698,3 +698,26 @@ test('the lyrics card shows the song’s synced lines, lights the one being sung
   await page.locator('.ly-l').first().click();
   await expect(page.locator('.ly-l.now')).toHaveText('Neon lights over the harbor');
 });
+
+test('the agents card shows only the agents at work, folds the idle ones behind a toggle, and the usage card draws today by hour', async ({ page }) => {
+  await page.goto('/panel/');
+  await page.evaluate(() => {
+    const cfg = JSON.parse(localStorage.getItem('pb-demo-config') || '{}');
+    localStorage.setItem('pb-demo-config', JSON.stringify({ ...cfg, night: { enabled: false }, pages: [{ id: 'p', title: 'P', enabled: true, widgets: [
+      { id: 's', type: 'sessions', x: 0, y: 0, w: 7, h: 6, options: {} }, { id: 'u', type: 'usage', x: 7, y: 0, w: 5, h: 6, options: {} }] }] }));
+    localStorage.removeItem('sess-idle');
+  });
+  await page.reload();
+  // the demo has 9 sessions: 3 idle for over 10 minutes are hidden
+  await expect(page.locator('.ai-card')).toHaveCount(6);
+  await expect(page.locator('.ai-card.waiting .ai-pill')).toHaveText('Needs you');
+  await expect(page.locator('.ai-card', { hasText: 'api-gateway' }).locator('.sess-meta')).toContainText('Opus 5.5 · 4.1M · 142k ctx');
+  await page.locator('.ai-more').click();
+  await expect(page.locator('.ai-card')).toHaveCount(9);
+  await expect(page.locator('.ai-card.old')).toHaveCount(3);
+  await page.locator('.ai-more').click();
+  await expect(page.locator('.ai-card')).toHaveCount(6);
+  await expect(page.locator('.us-area .us-line')).toBeAttached();
+  await expect(page.locator('.us-ticks span')).toHaveCount(5);
+  await expect(page.locator('.us-bar')).toHaveCount(7);
+});

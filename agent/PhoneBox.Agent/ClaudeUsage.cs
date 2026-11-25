@@ -7,8 +7,13 @@ public sealed record UsageTotals(long Tokens, double CostUsd);
 public sealed record UsageDay(string Date, long Tokens, double CostUsd);
 public sealed record UsageProject(string Name, long TokensToday, long TokensWeek, double CostWeekUsd);
 public sealed record UsageModel(string Model, long TokensWeek);
+/// <param name="Id">Claude Code's session id (the "claude:{id}" of /api/work).</param>
+/// <param name="Context">The prompt size of its latest message (input + cache): how full its context is.</param>
+public sealed record UsageSession(string Id, string Model, long Tokens, double CostUsd, long LastAt, long Context);
+/// <param name="Hourly">Today's tokens per local hour, 0-23.</param>
+/// <param name="Sessions">The sessions active in the last 2 days, latest first.</param>
 public sealed record UsageReport(UsageTotals Today, UsageTotals Week, IReadOnlyList<UsageDay> Daily, IReadOnlyList<UsageProject> Projects,
-    IReadOnlyList<UsageModel> Models, long UpdatedAt, bool CostPartial);
+    IReadOnlyList<UsageModel> Models, long UpdatedAt, bool CostPartial, IReadOnlyList<long>? Hourly = null, IReadOnlyList<UsageSession>? Sessions = null);
 
 /// <summary>
 /// Claude Code token use and its API-price cost, from the assistant messages' "usage" in ~/.claude/projects/**/*.jsonl.
@@ -107,7 +112,7 @@ public sealed class ClaudeUsage(ILogger<ClaudeUsage> log) : BackgroundService
         if (!_entries.TryGetValue(parsed.Id, out var prev) || parsed.Entry.Tokens > prev.Tokens) _entries[parsed.Id] = parsed.Entry;
     }
 
-    internal sealed record UsageEntry(long At, string Model, string Project, long Tokens, double CostUsd, bool Priced);
+    internal sealed record UsageEntry(long At, string Model, string Project, long Tokens, double CostUsd, bool Priced, string Session = "", long Context = 0);
 
     /// <summary>One transcript line: an assistant message with usage, or null.</summary>
     internal static (string Id, UsageEntry Entry)? ParseLine(ReadOnlySpan<byte> line)
@@ -133,7 +138,8 @@ public sealed class ClaudeUsage(ILogger<ClaudeUsage> log) : BackgroundService
             var price = Prices.For(model);
             var cost = price is null ? 0 : (input * price.Input + output * price.Output + (cacheWrite - write1h) * price.Input * 1.25
                 + write1h * price.Input * 2 + cacheRead * price.CacheRead) / 1_000_000;
-            return (id, new UsageEntry(ts.ToUnixTimeMilliseconds(), model, project, tokens, cost, price is not null));
+            return (id, new UsageEntry(ts.ToUnixTimeMilliseconds(), model, project, tokens, cost, price is not null,
+                Str(r, "sessionId") ?? "", input + cacheWrite + cacheRead));
         }
         catch (JsonException) { return null; }
         catch (InvalidOperationException) { return null; }
@@ -148,8 +154,18 @@ public sealed class ClaudeUsage(ILogger<ClaudeUsage> log) : BackgroundService
         var projects = new Dictionary<string, (long Today, long Week, double Cost)>();
         var models = new Dictionary<string, long>();
         var partial = false;
+        var hourly = new long[24];
+        var sessions = new Dictionary<string, UsageSession>();
+        var recent = now.AddDays(-2).ToUnixTimeMilliseconds();
         foreach (var e in entries)
         {
+            if (e.Session.Length > 0 && e.At >= recent)
+            {
+                var s = sessions.GetValueOrDefault(e.Session) ?? new UsageSession(e.Session, e.Model, 0, 0, 0, 0);
+                sessions[e.Session] = e.At >= s.LastAt
+                    ? s with { Model = e.Model, Tokens = s.Tokens + e.Tokens, CostUsd = s.CostUsd + e.CostUsd, LastAt = e.At, Context = e.Context }
+                    : s with { Tokens = s.Tokens + e.Tokens, CostUsd = s.CostUsd + e.CostUsd };
+            }
             var day = TimeZoneInfo.ConvertTime(DateTimeOffset.FromUnixTimeMilliseconds(e.At), tz).Date;
             if (day < firstDay || day > today) continue;
             var d = perDay[day];
@@ -157,6 +173,7 @@ public sealed class ClaudeUsage(ILogger<ClaudeUsage> log) : BackgroundService
             var p = projects.GetValueOrDefault(e.Project);
             projects[e.Project] = (p.Today + (day == today ? e.Tokens : 0), p.Week + e.Tokens, p.Cost + e.CostUsd);
             models[e.Model] = models.GetValueOrDefault(e.Model) + e.Tokens;
+            if (day == today) hourly[TimeZoneInfo.ConvertTime(DateTimeOffset.FromUnixTimeMilliseconds(e.At), tz).Hour] += e.Tokens;
             partial |= !e.Priced;
         }
         var t = perDay[today];
@@ -167,7 +184,8 @@ public sealed class ClaudeUsage(ILogger<ClaudeUsage> log) : BackgroundService
             projects.OrderByDescending(kv => kv.Value.Week).Take(8)
                 .Select(kv => new UsageProject(kv.Key, kv.Value.Today, kv.Value.Week, Math.Round(kv.Value.Cost, 4))).ToList(),
             models.OrderByDescending(kv => kv.Value).Select(kv => new UsageModel(kv.Key, kv.Value)).ToList(),
-            now.ToUnixTimeMilliseconds(), partial);
+            now.ToUnixTimeMilliseconds(), partial, hourly,
+            sessions.Values.OrderByDescending(x => x.LastAt).Take(40).Select(x => x with { CostUsd = Math.Round(x.CostUsd, 4) }).ToList());
     }
 
     private static string? Str(JsonElement e, string p) =>

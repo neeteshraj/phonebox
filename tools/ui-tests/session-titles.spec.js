@@ -45,8 +45,8 @@ test('a chat title is the main line with the folder under it, and a long one is 
   const nm = long.locator('.nm');
   const cut = await nm.evaluate((e) => ({ over: e.scrollWidth > e.clientWidth, ellipsis: getComputedStyle(e).textOverflow, wrap: getComputedStyle(e).whiteSpace }));
   expect(cut).toEqual({ over: true, ellipsis: 'ellipsis', wrap: 'nowrap' });
-  const rowBox = await long.boundingBox();
-  expect(rowBox.height).toBeLessThan(60); // the long title did not wrap the row
+  const rowBox = await long.boundingBox(), short = await first.boundingBox();
+  expect(rowBox.height).toBe(short.height); // the long title did not wrap the row
 });
 
 test('the details dialog shows its facts in one compact row and cuts a long title', async ({ page }) => {
