@@ -517,7 +517,7 @@ test('clicking a RAM widget navigates to the Processes page sorted by RAM', asyn
   const procHead = page.locator('.w .p-head');
   await expect(procHead).toBeVisible();
   await expect(procHead.locator('.seg button.on')).toHaveText('RAM');
-  await expect(procHead.locator('.p-sum')).toContainText('Total RAM');
+  await expect(procHead.locator('.p-sum .p-kpi', { hasText: 'RAM' })).toContainText('GB');
 });
 
 test('the landing page embeds the panel', async ({ page }) => {

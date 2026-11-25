@@ -1020,44 +1020,68 @@ W.processes = {
     let sort = currentProcessesSort();
     const sum = h('span', 'p-sum');
     const seg = h('div', 'seg', h('button', sort === 'cpu' ? 'on' : null, 'CPU'), h('button', sort === 'mem' ? 'on' : null, 'RAM'));
+    // who takes the CPU (or the memory): one bar split by the busiest apps, with a legend
+    const share = h('div', 'p-share', h('div', 'p-share-bar'), h('div', 'p-share-key'));
     const grid = h('div', 'p-grid', h('div', 'empty', t('w.procsWait')));
     box.style.setProperty('--c', '#f472b6');
-    box.append(h('div', 'p-head', h('span', 's-label', t('w.processes')), sum, seg), grid);
+    box.classList.add('px');
+    box.append(h('div', 'p-head', h('span', 's-label', t('w.processes')), sum, seg), share, grid);
     const els = new Map();
     const rowEl = (g) => {
       let e = els.get(g.name);
       if (e) return e;
       e = h('div', 'proc');
       e.innerHTML = '<div class="p-ico"></div><div class="p-info"><div class="p-title"><span class="p-t"></span><span class="p-count"></span><span class="p-lock"></span></div>' +
-        '<div class="p-bar"><i></i></div></div><div class="p-nums"><b></b><small></small></div>';
+        '<div class="p-sub"></div><div class="p-bar"><i></i></div></div><div class="p-nums"><b></b><small></small></div><i class="p-meter"></i>';
       fillIcon(e.querySelector('.p-ico'), g);
-      e.style.setProperty('--hue', monogramColor(g.name)); // the row's load fill takes the app's colour
+      e.style.setProperty('--hue', monogramColor(g.title)); // the app's colour, the same as in the share bar
       e.addEventListener('click', () => { haptic(); openSheet(e._g, canKill); });
       els.set(g.name, e);
       return e;
     };
+    const val = (g) => (sort === 'cpu' ? g.cpu : g.memMb);
+    const fmtVal = (v) => (sort === 'cpu' ? v.toFixed(1) + '%' : fmtMem(v));
+    const kpi = (label, value) => h('span', 'p-kpi', h('small', null, label), h('b', null, value));
     const render = () => {
       const data = D.procs;
       if (!data) return;
       if (!data.groups.length) { sum.textContent = ''; grid.replaceChildren(h('div', 'empty', t('w.measuring'))); return; }
       const cols = box.clientWidth > 460 ? 2 : 1;
-      const rowH = document.body.dataset.theme === 'material' ? 54 : 40; // Material rows are taller tiles
-      const rows = Math.max(1, Math.floor((box.clientHeight - 46) / rowH));
+      const rowH = document.body.dataset.theme === 'material' || document.body.dataset.theme === 'shadcn' ? 50 : 44;
+      const showShare = box.clientHeight > 260;
+      share.hidden = !showShare;
+      const rows = Math.max(1, Math.floor((box.clientHeight - 50 - (showShare ? 46 : 0)) / rowH));
       grid.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
       grid.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
-      const list = [...data.groups].sort((a, b) => (sort === 'cpu' ? b.cpu - a.cpu || b.memMb - a.memMb : b.memMb - a.memMb)).slice(0, cols * rows);
-      const max = Math.max(0.1, ...list.map((g) => (sort === 'cpu' ? g.cpu : g.memMb)));
+      const sorted = [...data.groups].sort((a, b) => (sort === 'cpu' ? b.cpu - a.cpu || b.memMb - a.memMb : b.memMb - a.memMb));
+      const list = sorted.slice(0, cols * rows);
+      const max = Math.max(0.1, ...list.map(val));
       const pc = D.state?.pc;
-      const cpuPct = pc && pc.cpu != null ? Math.round(pc.cpu) : null;
-      const ramPct = pc && pc.ramTotalGb ? Math.round((pc.ramUsedGb / pc.ramTotalGb) * 100) : null;
-      const ramStr = ramPct != null && pc.ramUsedGb != null && pc.ramTotalGb != null
-        ? `Total RAM ${ramPct}% (${Math.round(pc.ramUsedGb)}/${Math.round(pc.ramTotalGb)} GB) · `
-        : (ramPct != null ? `Total RAM ${ramPct}% · ` : '');
-      const loadPart = sort === 'cpu'
-        ? (cpuPct != null ? `Total CPU ${cpuPct}% · ` : '')
-        : ramStr;
-      sum.textContent = box.clientWidth > 380 ? loadPart + t('w.procsSummary', { n: data.total, apps: data.groupCount ?? data.groups.length }) : loadPart + t('w.procsSummaryShort', { n: data.total });
+      sum.replaceChildren(...[
+        pc?.cpu != null ? kpi('CPU', Math.round(pc.cpu) + '%') : null,
+        pc?.ramTotalGb ? kpi('RAM', `${r1(pc.ramUsedGb)} / ${Math.round(pc.ramTotalGb)} GB`) : null,
+        box.clientWidth > 520 ? kpi('Processes', String(data.total)) : null,
+        box.clientWidth > 640 ? kpi('Apps', String(data.groupCount ?? data.groups.length)) : null,
+      ].filter(Boolean));
+      if (showShare) {
+        // the top five by app name (helpers folded into their app), the rest as "Other"
+        const byApp = new Map();
+        for (const g of sorted) byApp.set(g.title, (byApp.get(g.title) || 0) + val(g));
+        const apps = [...byApp].sort((x, y) => y[1] - x[1]);
+        const total = apps.reduce((a, x) => a + x[1], 0) || 1;
+        const top = apps.slice(0, 5), rest = total - top.reduce((a, x) => a + x[1], 0);
+        const parts = [...top.map(([n, v]) => [n, v, monogramColor(n)]), ...(rest > 0 ? [['Other', rest, '#52525b']] : [])];
+        share.firstChild.replaceChildren(...parts.map(([n, v, c]) => { const i = h('i'); i.style.flexGrow = String(v); i.style.background = c; i.title = n; return i; }));
+        share.lastChild.replaceChildren(...parts.map(([n, v, c]) => {
+          const k = h('span', 'p-key', h('i'), h('span', null, n), h('b', null, Math.round((v / total) * 100) + '%'));
+          k.firstChild.style.background = c;
+          return k;
+        }));
+      }
       if (grid.querySelector('.empty')) grid.replaceChildren();
+      // an app shown more than once (VS Code's helpers): each row says which process it is
+      const titles = new Map();
+      for (const g of list) titles.set(g.title, (titles.get(g.title) || 0) + 1);
       const keep = new Set(list.map((g) => g.name));
       for (const [n, e] of els) if (!keep.has(n)) { e.remove(); els.delete(n); }
       for (const g of list) {
@@ -1066,11 +1090,14 @@ W.processes = {
         e.querySelector('.p-t').textContent = g.title;
         e.querySelector('.p-count').textContent = g.count > 1 ? '×' + g.count : '';
         e.querySelector('.p-lock').replaceChildren(...(g.locked ? [icon('lock')] : []));
-        const share = ((sort === 'cpu' ? g.cpu : g.memMb) / max) * 100;
-        e.querySelector('.p-bar i').style.width = share + '%';
-        e.style.setProperty('--w', share.toFixed(1) + '%'); // Material fills the whole row up to this
-        e.querySelector('.p-nums b').textContent = sort === 'cpu' ? g.cpu.toFixed(1) + '%' : fmtMem(g.memMb);
-        e.querySelector('.p-nums small').textContent = sort === 'cpu' ? fmtMem(g.memMb) : g.cpu.toFixed(1) + '%';
+        const named = titles.get(g.title) > 1 || !g.title.toLowerCase().includes(g.name.toLowerCase()); // "code" under Visual Studio Code says nothing
+        const subParts = [named ? g.name : '', g.count > 1 ? `${g.count} processes` : ''].filter((x) => x && x !== g.title);
+        e.querySelector('.p-sub').textContent = subParts.join(' · ');
+        const pct = (val(g) / max) * 100;
+        e.querySelector('.p-bar i').style.width = pct + '%';
+        e.style.setProperty('--w', pct.toFixed(1) + '%');
+        e.querySelector('.p-nums b').textContent = fmtVal(val(g));
+        e.querySelector('.p-nums small').textContent = sort === 'cpu' ? fmtMem(g.memMb) : g.cpu.toFixed(1) + '% CPU';
         grid.appendChild(e); // keeps the order
       }
     };
