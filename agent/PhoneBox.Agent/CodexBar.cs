@@ -288,13 +288,68 @@ internal static class CodexBar
         return providers.GroupBy(p => p.Id).Select(g => g.First()).ToList();
     }
 
+    /// <summary>
+    /// How long a successful CodexBar reading may still drive the ring after a later poll fails
+    /// (Cursor cookie / Keychain blips when the agent runs <c>codexbar</c> from launchd).
+    /// </summary>
+    internal const long LastGoodHoldMs = 6 * 3_600_000;
+
+    /// <summary>Fresh CodexBar data wins over local for ten minutes.</summary>
+    internal const long FreshExternalMs = 600_000;
+
+    /// <summary>
+    /// A prior healthy CodexBar reading that may still be shown: within <see cref="LastGoodHoldMs"/>, with any
+    /// window whose <see cref="QuotaLimit.ResetsAt"/> has passed removed (a 5-hour session from 6 hours ago must not linger).
+    /// </summary>
+    internal static QuotaProvider? HeldReading(QuotaProvider? previous, long now)
+    {
+        if (previous is not { Error: null, Limits.Count: > 0, UpdatedAt: { } at }) return null;
+        if (now - at > LastGoodHoldMs) return null;
+        var limits = previous.Limits.Where(l => l.ResetsAt is not { } r || r > now).ToList();
+        if (limits.Count == 0) return null;
+        return limits.Count == previous.Limits.Count ? previous : previous with { Limits = limits };
+    }
+
+    /// <summary>
+    /// Merges a CodexBar poll into the previous snapshot. A failed or empty provider keeps the last
+    /// good limits (without the error) so Cursor / Grok rings do not go blank on a transient session miss.
+    /// </summary>
+    internal static IReadOnlyList<QuotaProvider> Merge(IReadOnlyList<QuotaProvider> previous, IReadOnlyList<QuotaProvider> latest, long now)
+    {
+        var list = new List<QuotaProvider>(latest.Count);
+        foreach (var p in latest)
+        {
+            var old = previous.FirstOrDefault(o => o.Id == p.Id);
+            if (p is { Error: null, Limits.Count: > 0 })
+            {
+                list.Add(p);
+                continue;
+            }
+            // Only promote a prior reading that was itself healthy — never clear an error that arrived with limits.
+            if (HeldReading(old, now) is { } held)
+            {
+                list.Add(held);
+                continue;
+            }
+            list.Add(p.Limits.Count == 0 && old is not null
+                ? old with { Error = p.Error ?? "CodexBar returned no data" }
+                : p);
+        }
+        foreach (var old in previous.Where(o => latest.All(p => p.Id != o.Id)))
+            list.Add(old with { Limits = [], Error = "CodexBar omitted this provider" });
+        return list;
+    }
+
     // Cached limits are usable only while the provider's latest result is healthy and recent.
     /// <summary>Chooses between local direct quota readings and CodexBar output for a provider.</summary>
     internal static QuotaProvider? Select(QuotaProvider? local, QuotaProvider? external, long now)
     {
-        if (external is { Error: null, Limits.Count: > 0, UpdatedAt: { } updated } && now - updated <= 600_000)
+        if (external is { Error: null, Limits.Count: > 0, UpdatedAt: { } updated } && now - updated <= FreshExternalMs)
             return external with { Codex = local?.Codex };
         if (local is { Error: null, Limits.Count: > 0 }) return local;
+        // Cursor has no local reader: keep the last good CodexBar reading across transient session failures.
+        if (HeldReading(external, now) is { } held)
+            return held with { Codex = local?.Codex };
         if (external is not null) return external with { Error = external.Error ?? "CodexBar data is stale", Codex = local?.Codex };
         return local;
     }

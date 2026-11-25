@@ -6,6 +6,23 @@ using Xunit;
 /// <summary>Config normalization: templates, the pre-0.6.2 page migration, grid limits, ids and what the phone sees.</summary>
 public class ConfigTests
 {
+    [Fact]
+    public void NullOrMissingSteamApiKeyKeepsStoredKeyButEmptyCanClearIt()
+    {
+        var proposed = JsonSerializer.Deserialize<AgentConfig>("{}", ConfigStore.ReadOpts)!;
+        Assert.True(ConfigStore.PreserveSteamApiKey(proposed, "stored-secret"));
+        Assert.Equal("stored-secret", proposed.Steam.ApiKey);
+
+        proposed = JsonSerializer.Deserialize<AgentConfig>("{\"steam\":{\"apiKey\":null}}", ConfigStore.ReadOpts)!;
+        Assert.True(ConfigStore.PreserveSteamApiKey(proposed, "stored-secret"));
+        Assert.Equal("stored-secret", proposed.Steam.ApiKey);
+
+        proposed.Steam.ApiKey = "";
+        Assert.False(ConfigStore.PreserveSteamApiKey(proposed, "stored-secret"));
+        Assert.Equal("", proposed.Steam.ApiKey);
+        Assert.False(ConfigStore.PreserveSteamApiKey(proposed, null));
+    }
+
     private static AgentConfig Load(string json)
     {
         var path = Path.Combine(Path.GetTempPath(), $"phonebox-cfg-{Guid.NewGuid():N}.json");
@@ -45,6 +62,26 @@ public class ConfigTests
         Assert.Equal(expected, weather.GetProperty("unit").GetString());
     }
 
+    // The model goes into the phone's forecast URL, so only the names the settings offer get through.
+    [Theory]
+    [InlineData("""{"weather":{"city":"Tallinn","lat":59.437,"lon":24.745}}""", "")]
+    [InlineData("""{"weather":{"model":"gfs_seamless"}}""", "gfs_seamless")]
+    [InlineData("""{"weather":{"model":" GFS_Seamless "}}""", "gfs_seamless")]
+    [InlineData("""{"weather":{"model":"ecmwf_ifs025"}}""", "ecmwf_ifs025")]
+    [InlineData("""{"weather":{"model":"gfs_seamless&daily=x"}}""", "")]
+    [InlineData("""{"weather":{"model":"accuweather"}}""", "")]
+    [InlineData("""{"weather":{"model":null}}""", "")]
+    [InlineData("""{"weather":{"city":"Oslo","model":42}}""", "")]
+    [InlineData("""{"weather":{"city":"Oslo","model":["gfs_seamless"]}}""", "")]
+    public void WeatherModelIsOneOfTheOfferedModelsOrBestMatch(string json, string expected)
+    {
+        var c = Load(json);
+        Assert.Equal(expected, c.Weather.Model);
+        if (json.Contains("Oslo")) Assert.Equal("Oslo", c.Weather.City);
+        var weather = JsonSerializer.SerializeToElement(c.ToPublic(), ConfigStore.WriteOpts).GetProperty("weather");
+        Assert.Equal(expected, weather.GetProperty("model").GetString());
+    }
+
     [Fact]
     public void BurnInProtectionIsOffByDefaultAndTheDimTimeIsClamped()
     {
@@ -54,6 +91,29 @@ public class ConfigTests
         Assert.Equal(1440, Load("""{ "display": { "pixelShift": true, "idleDimMin": 99999 } }""").Display.IdleDimMin);
         Assert.Equal(0, Load("""{ "display": { "idleDimMin": -5 } }""").Display.IdleDimMin);
         Assert.True(Load("""{ "display": { "pixelShift": true } }""").Display.PixelShift);
+    }
+
+    [Fact]
+    public void UnreachableNightScreenIsOffByDefaultAndDelayIsClamped()
+    {
+        var defaults = Load("{}").Display;
+        Assert.False(defaults.NightWhenUnreachable);
+        Assert.Equal(5, defaults.UnreachableNightDelayMin);
+        Assert.Equal(30, Load("""{ "display": { "nightWhenUnreachable": true, "unreachableNightDelayMin": 999 } }""").Display.UnreachableNightDelayMin);
+        Assert.Equal(1, Load("""{ "display": { "nightWhenUnreachable": true, "unreachableNightDelayMin": -5 } }""").Display.UnreachableNightDelayMin);
+        Assert.True(Load("""{ "display": { "nightWhenUnreachable": true } }""").Display.NightWhenUnreachable);
+    }
+
+    [Fact]
+    public void DisplayFinishSoundVolumeDefaultsAndRange()
+    {
+        var defaults = Load("{}").Display;
+        Assert.False(defaults.FinishSound);
+        Assert.Equal(70, defaults.FinishSoundVolume);
+        Assert.Equal(100, Load("""{ "display": { "finishSoundVolume": 999 } }""").Display.FinishSoundVolume);
+        Assert.Equal(10, Load("""{ "display": { "finishSoundVolume": -5 } }""").Display.FinishSoundVolume);
+        Assert.Equal(10, Load("""{ "display": { "finishSoundVolume": 0 } }""").Display.FinishSoundVolume);
+        Assert.Equal(50, Load("""{ "display": { "finishSoundVolume": 50 } }""").Display.FinishSoundVolume);
     }
 
     [Fact]
@@ -235,9 +295,40 @@ public class ConfigTests
         var ws = c.Pages.Single().Widgets!;
         Assert.Equal(3, ws.Count);                                      // the unknown widget is dropped
         var clock = ws[0];
-        Assert.True(clock.X + clock.W <= 12 && clock.Y + clock.H <= 6);
+        Assert.True(clock.X + clock.W <= Catalog.Cols && clock.Y + clock.H <= Catalog.MaxRows);
+        Assert.Equal(9, clock.H); // taller than a phone page, still inside the tablet maximum
         Assert.Equal(0, ws[1].X);
         Assert.Equal(["clock", "n", "n-2"], ws.Select(w => w.Id));
+    }
+
+    [Fact]
+    public void WidgetsOnLaterRowsStayThereUntilTheMaximum()
+    {
+        var c = Load("""
+        { "pages": [ { "id": "p", "title": "P", "widgets": [
+            { "type": "clock", "x": 0, "y": 6, "w": 6, "h": 2 },
+            { "type": "note", "x": 0, "y": 40, "w": 2, "h": 30 } ] } ] }
+        """);
+        var ws = c.Pages.Single().Widgets!;
+        Assert.Equal(6, ws[0].Y); // below a phone's 6 rows: kept for a tablet
+        Assert.Equal(2, ws[0].H);
+        Assert.Equal(Catalog.MaxRows, ws[1].H);
+        Assert.True(ws[1].Y + ws[1].H <= Catalog.MaxRows);
+    }
+
+    [Fact]
+    public void MoreRowsOnATabletIsOffByDefaultAndKeptWhenOn()
+    {
+        Assert.False(Load("{}").Display.TabletRows);
+        Assert.True(Load("""{ "display": { "tabletRows": true } }""").Display.TabletRows);
+        // the default files are embedded in the agent, not copied next to the tests
+        foreach (var name in new[] { "config.default.json", "config.default.linux.json", "config.default.macos.json" })
+        {
+            using var stream = typeof(AgentConfig).Assembly.GetManifestResourceStream(name);
+            Assert.NotNull(stream);
+            using var doc = System.Text.Json.JsonDocument.Parse(stream, new() { CommentHandling = System.Text.Json.JsonCommentHandling.Skip, AllowTrailingCommas = true });
+            Assert.Equal(System.Text.Json.JsonValueKind.False, doc.RootElement.GetProperty("display").GetProperty("tabletRows").ValueKind);
+        }
     }
 
     [Fact]
@@ -297,6 +388,16 @@ public class LanTests
     [InlineData("/api/feeds/open", true)]
     [InlineData("/api/photos", true)]
     [InlineData("/api/photos/0123456789abcdef", true)]
+    [InlineData("/api/steam", true)]
+    [InlineData("/api/steam/avatar", true)]
+    [InlineData("/api/steam/other", false)]
+    [InlineData("/api/steam/library", true)]
+    [InlineData("/api/steam/cover", true)]
+    [InlineData("/api/steam/launch", true)]
+    [InlineData("/api/steam/library/x", false)]
+    [InlineData("/api/steam/games", false)]
+    [InlineData("/api/lyrics", true)]
+    [InlineData("/api/lyrics/search", false)]
     [InlineData("/api/push/temperature", true)]
     [InlineData("/api/settings", false)]
     [InlineData("/api/pair", false)]
@@ -311,6 +412,7 @@ public class LanTests
     [InlineData("/api/claude/hook", false)]
     [InlineData("/api/sessions/prompt", true)]
     [InlineData("/api/sessions/run", true)]
+    [InlineData("/api/codex/hook", false)]
     [InlineData("/api/obs-test", false)]
     [InlineData("/api/ha/test", false)]
     [InlineData("/api/phones", false)]
@@ -409,6 +511,31 @@ public class ConfigConcurrencyTests
     }
 
     [Fact]
+    public void EveryWriteMovesTheVersionForward()
+    {
+        // The version is the file's write time, which Windows keeps in coarse steps: two quick writes could share one
+        // version, and a stale save got through. A write time ahead of the clock stands in for "the same step" here, on
+        // any machine: a write must still move the version past it.
+        var (s, path) = NewStore();
+        try
+        {
+            var ahead = DateTime.UtcNow.AddMinutes(5);
+            File.SetLastWriteTimeUtc(path, ahead);
+            var loaded = s.Version;
+            Assert.Null(s.Save(With(s, c => c.Night.Start = "01:11"), loaded));
+            Assert.True(s.Version > loaded);
+            Assert.Equal(ConfigStore.Conflict, s.Save(With(s, c => c.Night.End = "06:06"), loaded)); // the stale one
+
+            File.SetLastWriteTimeUtc(path, ahead);
+            loaded = s.Version;
+            s.Touch();
+            Assert.True(s.Version > loaded);
+            Assert.True(s.VersionConflict(loaded.ToString()));
+        }
+        finally { File.Delete(path); File.Delete(path + ".bak"); }
+    }
+
+    [Fact]
     public void TouchAdvancesVersionSoAnotherTabsConflictCheckNoticesIt()
     {
         var (s, path) = NewStore();
@@ -501,6 +628,10 @@ public class ConfigConcurrencyTests
     [InlineData("\"TR\"", "tr")]       // any case
     [InlineData("\" de \"", "de")]     // stray spaces
     [InlineData("\"vi\"", "vi")]       // added after the list was first written (#177)
+    [InlineData("\"pt-BR\"", "pt-BR")] // distinct from pt; casing must survive the round trip, i18n.js looks it up by exact code
+    [InlineData("\"pt-br\"", "pt-BR")] // any case still normalizes to the canonical pt-BR, not a lowercase copy
+    [InlineData("\"zh-hant\"", "zh-Hant")]
+    [InlineData("\"AR\"", "ar")]
     [InlineData("\"xx\"", "auto")]     // a language PhoneBox does not have
     [InlineData("null", "auto")]
     [InlineData("\"\"", "auto")]
@@ -529,7 +660,7 @@ public class ConfigConcurrencyTests
         using var s = AppPaths.Resource("www/i18n.js");
         Assert.NotNull(s);
         var js = new StreamReader(s!).ReadToEnd();
-        var codes = System.Text.RegularExpressions.Regex.Matches(js, @"\{\s*code:\s*'([a-z]{2,3})'").Select(m => m.Groups[1].Value).ToHashSet();
+        var codes = System.Text.RegularExpressions.Regex.Matches(js, @"\{\s*code:\s*'([A-Za-z]{2,3}(?:-[A-Za-z]{2,4})?)'").Select(m => m.Groups[1].Value).ToHashSet();
         Assert.Contains("en", codes);
         Assert.Equal(codes.Order(), DisplayConfig.Languages.Where(l => l != "auto").Order());
     }
@@ -564,6 +695,33 @@ public class Hour12ConfigTests
             var prop = doc.RootElement.GetProperty("display").GetProperty("hour12");
             Assert.Equal(expectedWrittenKind, prop.ValueKind);
             if (expectedWrittenKind == JsonValueKind.String) Assert.Equal("auto", prop.GetString());
+        }
+        finally
+        {
+            File.Delete(path);
+            File.Delete(path + ".bak");
+        }
+    }
+}
+
+public class PageBarConfigTests
+{
+    [Theory]
+    [InlineData("{}", "dots", "bottom")]
+    [InlineData("""{"display":{"pageBar":"bar","pageBarSide":"left"}}""", "bar", "left")]
+    [InlineData("""{"display":{"pageBar":"auto","pageBarSide":"right"}}""", "auto", "right")]
+    [InlineData("""{"display":{"pageBar":"hidden"}}""", "hidden", "bottom")]
+    [InlineData("""{"display":{"pageBar":"sideways","pageBarSide":"top"}}""", "dots", "bottom")]
+    [InlineData("""{"display":{"pageBar":null,"pageBarSide":null}}""", "dots", "bottom")]
+    public void APageBarSettingThePanelDoesNotKnowIsSavedAsTheDefault(string inputJson, string bar, string side)
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"phonebox-pagebar-{Guid.NewGuid():N}.json");
+        try
+        {
+            File.WriteAllText(path, "{}");
+            var store = new ConfigStore(path);
+            Assert.Null(store.Save(inputJson));
+            Assert.Equal((bar, side), (store.Get().Display.PageBar, store.Get().Display.PageBarSide));
         }
         finally
         {

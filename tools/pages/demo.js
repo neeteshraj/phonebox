@@ -8,6 +8,11 @@
   const realFetch = window.fetch.bind(window);
   const bc = new BroadcastChannel('phonebox-demo');
   const START = Date.now();
+  // made-up Steam games for the Steam library widget: [app id, name, played hours ago (null = never), state, progress, hue]
+  const DEMO_GAMES = [['900010', 'Harbor Lights', 0, 'ready', null, 12], ['900020', 'Starfall Tactics', 26, 'ready', null, 42],
+    ['900030', 'Moss Garden', 74, 'updating', 0.42, 120], ['900040', 'Deep Circuit', 300, 'ready', null, 210], ['900050', 'Paper Comet', 900, 'update', null, 190],
+    ['900060', 'Lantern Keep', 1200, 'ready', null, 280], ['900070', 'Glass Orchard', 1500, 'paused', 0.7, 330], ['900080', 'Tidal Forge', 2000, 'ready', null, 160],
+    ['900090', 'Quiet Summit', 2600, 'ready', null, 60], ['900100', 'Iron Meadow', null, 'ready', null, 95]];
   const now = () => Date.now();
   const rnd = (a, b) => a + Math.random() * (b - a);
   const wave = (period, lo, hi, phase = 0, noise = 0) =>
@@ -29,7 +34,7 @@
   async function loadCatalog() {
     if (catalog) return catalog;
     const [widgets, templates] = await Promise.all([realFetch(ROOT + 'widgets.json').then((r) => r.json()), realFetch(ROOT + 'templates.json').then((r) => r.json())]);
-    return (catalog = { cols: 12, rows: 6, widgets, templates });
+    return (catalog = { cols: 12, rows: 6, maxRows: 18, widgets, templates });
   }
 
   const store = {
@@ -50,25 +55,29 @@
     const action = (id, label, kind, target, value = 0) => ({ id, label, kind, target, argument: null, value, device: null });
     // every section the agent serves, with its defaults (Config.cs), so the settings page shows what a real one does
     c = {
-      codexBar: { providers: ['claude', 'codex', 'antigravity'], rotate: true, pageSize: 2, rotateInterval: 8 },
+      codexBar: { providers: ['claude', 'codex', 'antigravity', 'grok'], rotate: true, pageSize: 2, rotateInterval: 8 },
       controls: { allowListening: false, allowPower: false, actions: [
         action('build', 'Build', 'task', 'npm run build'), action('tests', 'Run tests', 'task', 'npm test'),
         action('web', 'Web dev server', 'server', 'npm run dev'), action('api', 'API dev server', 'server', 'dotnet watch'),
         action('meet-mic', 'Mute in meeting', 'meeting', 'Ctrl+D'), action('meet-cam', 'Camera', 'meeting', 'Ctrl+E'), action('meet-hand', 'Raise hand', 'meeting', 'Ctrl+Alt+H'),
         action('chime', 'Chime', 'sound', 'chime.wav', 75), action('applause', 'Applause', 'sound', 'applause.wav', 75),
+        action('plex-chill', 'Chill', 'plex-playlist', '12'), action('plex-focus', 'Focus', 'plex-playlist', '13'),
       ], profiles: [{ id: 'meeting', label: 'Meeting', levels: [], actions: [], output: null, input: null, defaults: {} },
         { id: 'music', label: 'Music', levels: [], actions: [], output: null, input: null, defaults: {} }],
-        spotifyToken: null, spotifyDevice: null, mixerExecutable: null, mixerLibrary: null, spotifyClientId: null, spotifyRefreshToken: null },
+        spotifyToken: null, spotifyDevice: null, mixerExecutable: null, mixerLibrary: null, spotifyClientId: null, spotifyRefreshToken: null,
+        plexUrl: null, plexToken: null, plexPlayerUrl: 'http://127.0.0.1:32500' },
       deviceSerial: null, adbPath: null,
-      weather: { city: 'Tallinn', lat: 59.437, lon: 24.745, unit: 'celsius' },
+      weather: { city: 'Tallinn', lat: 59.437, lon: 24.745, unit: 'celsius', model: '' },
       night: { enabled: false, start: '00:30', end: '07:30', brightness: 0.02 },
       display: { appearance: null, showSeconds: true, hour12: false, idleReturnSec: 0, vibrate: true, volumeKeys: true, orientation: 'landscape', theme: 'default', accent: '#2dd4bf',
         pixelShift: false, idleDimMin: 0,
-        artTint: true, autoBrightness: false, nightWhenDark: false, proximityWake: true, pin: false, homeScreen: false, keepAwake: true, followComputerLock: false,
+        artTint: true, autoBrightness: false, nightWhenDark: false, nightWhenUnreachable: false, unreachableNightDelayMin: 5, proximityWake: true, pin: false, homeScreen: false, keepAwake: true, openOnConnect: true, followComputerLock: false,
         homePage: null, switchCountdownSec: 3, touchGraceSec: 20, minDwellSec: 15, holdMaxMin: 30 },
       lan: { enabled: true, port: 8766, token: 'demo', webhookToken: 'demo-webhook-key' },
       updates: { auto: true, repo: 'ersinkoc/phonebox' },
       claude: { phoneApprovals: true, timeoutSec: 90, onlyWhenAway: false },
+      antigravity: { sessions: false, shareSessionTitles: false },
+      opencode: { phoneApprovals: false, sessions: false, timeoutSec: 90, onlyWhenAway: false, alwaysCountdownSec: 10, watchWsl: false, shareSessionTitles: false },
       pages: PAGES.filter((id) => byId[id]).map((id) => {
         const t = byId[id], seen = {};
         return { appearance: null, id, title: t.title, icon: t.icon, enabled: true, idleSec: null, widgets: t.widgets.map((w) => {
@@ -97,6 +106,7 @@
   async function config() {
     const c = await loadConfig();
     muteKeys = (c.shortcuts || []).filter((x) => x.cmd === 'builtin:mute').map((x) => x.id);
+    cycleLists = Object.fromEntries((c.shortcuts || []).filter((x) => x.cmd === 'builtin:cycle').map((x) => [x.id, JSON.stringify(x.cycle || [])]));
     return c;
   }
   const cfgVersion = () => store.get('pb-demo-version', 1);
@@ -106,6 +116,15 @@
   const isObs = (type) => type === 'obs' || type.startsWith('obs-');
   // like AgentConfig.Widgets(enabledPagesOnly: true): what may control the computer comes from enabled pages only
   const shownWidgets = (c) => widgets({ ...c, pages: (c.pages || []).filter((p) => p.enabled !== false) });
+  // a saved config without a Discord section keeps the simulated connection; an explicit enabled: false turns it off
+  const dcOn = (c) => c.discord?.enabled !== false;
+  const dcControl = (c) => shownWidgets(c).some((w) => w.type === 'discord' && w.options?.control === true); // DiscordMonitor.WidgetControl
+  const dcBar = (c) => shownWidgets(c).some((w) => w.type === 'discord-bar' && w.options?.control === true); // DiscordMonitor.BarControl
+  // DiscordMonitor.ControlAllowed: the bar's own option allows only the actions it shows
+  const dcVoice = (c, a) => c.discord?.allowControl === true || dcControl(c) || ((a == null || ['mute', 'deafen', 'leave'].includes(a)) && dcBar(c));
+  const dcShare = (c) => dcOn(c) && c.discord?.screenShare === true && dcControl(c); // DiscordMonitor.ShareWanted
+  const dcShareState = (c) => dcOn(c) && c.discord?.screenShare === true && (dcControl(c) || dcBar(c)); // DiscordMonitor.ShareStateWanted
+  const dcChat = (c) => dcOn(c) && c.discord?.chat === true && shownWidgets(c).some((w) => w.type === 'discord'); // DiscordMonitor.ChatWanted
   const feedsCanOpen = (c) => shownWidgets(c).some((w) => w.type === 'feeds' && w.options?.open === true);
 
   // What the agent sends to a phone (AgentConfig.ToPublic): no commands, keys, tokens or what a rule matches on.
@@ -113,12 +132,18 @@
     const options = (w) => w.type === 'command' ? Object.fromEntries(Object.entries(w.options || {}).filter(([k]) => k === 'title' || k === 'interval')) : w.options ?? null;
     return {
       weather: c.weather, codexBar: c.codexBar, night: c.night, display: c.display,
+      // homePage: the agent sends a device's own home page (Settings › Phones); the demo has no devices, so a config
+      // that sets it stands in for one (see device-panel.spec.js)
+      homePage: c.homePage ?? null,
+      // wallpaperRev: the agent sets it while a wallpaper is uploaded; the demo serves no picture, so a config that
+      // sets it also needs /agent/api/wallpaper mocked (see wallpaper.spec.js)
+      wallpaperRev: c.wallpaperRev ?? null,
       pages: (c.pages || []).map((p) => ({ id: p.id, title: p.title, icon: p.icon, enabled: p.enabled !== false, idleSec: p.idleSec ?? null, appearance: p.appearance ?? null,
         widgets: (p.widgets || []).map((w) => ({ id: w.id, type: w.type, x: w.x, y: w.y, w: w.w, h: w.h, appearance: w.appearance ?? null, options: options(w) })) })),
       // iconRev / iconUpload: the agent sets them when a shortcut has a picture (and when the user uploaded it). The demo
       // has no uploads and serves no /agent/api/shortcuts/icon, so a config that sets them also needs that image mocked
       // (see button-cover.spec.js); without one the key keeps its emoji.
-      shortcuts: (c.shortcuts || []).map(({ id, label, icon, color, toggle, cmd, iconRev, iconUpload, bundle }) => ({ id, label, icon, color, toggle: !!toggle || cmd === 'builtin:mute', iconRev: iconRev ?? null, iconUpload: iconUpload === true,
+      shortcuts: (c.shortcuts || []).map(({ id, label, icon, color, toggle, cmd, longPress, cycle, iconRev, iconUpload, iconSize, bundle }) => ({ id, label, icon, color, iconSize: typeof iconSize === 'string' && ['m', 'l', 'max'].includes(iconSize.trim().toLowerCase()) ? iconSize.trim().toLowerCase() : undefined, toggle: !!toggle || cmd === 'builtin:mute', cycle: cmd === 'builtin:cycle' && (cycle || []).length > 0, hold: !!longPress && longPress !== id && (c.shortcuts || []).some((x) => x.id === longPress), iconRev: iconRev ?? null, iconUpload: iconUpload === true,
         // like the agent: built-in actions apart from apps (the demo marks its screen-off and lock keys as actions too)
         kind: String(cmd).startsWith('builtin:') || ['screenoff', 'lock'].includes(id) ? 'action' : 'app', bundle: bundle ?? null })),
       rules: (c.rules || []).map(({ id, name, enabled, when }) => ({ id, name, enabled: enabled !== false, when })),
@@ -183,7 +208,7 @@
         .map(([id, tokens, context]) => ({ id, model: 'claude-opus-5-5', tokens, costUsd: +(tokens / 1e6 * 1.9).toFixed(2), lastAt: now() - 6e4, context })) };
   };
   const SAMPLE_PROMPTS = [
-    { tool: 'Run a command', detail: 'git push origin main --force-with-lease', description: 'Push the rebased branch', project: 'api-gateway' },
+    { tool: 'Run a command', detail: 'git push origin main --force-with-lease', description: 'Push the rebased branch', project: 'api-gateway', cwd: '/Users/me/work/api-gateway' },
     { tool: 'Edit a file', detail: 'src/routes/billing.ts\n\n  export const limit = rateLimit({ windowMs: 60_000, max: 120 })', description: '', project: 'docs-site',
       diff: { path: 'src/routes/billing.ts', hunks: [{ old: "import { rateLimit } from './limits';\nexport const limit = rateLimit({ windowMs: 60_000, max: 120 });", new: "import { rateLimit } from './limits';\nexport const limit = rateLimit({ windowMs: 60_000, max: 200 });\nexport const burst = 20;" }] } },
     { tool: 'Fetch a web page', detail: 'https://docs.github.com/en/rest/pulls', description: '', project: 'blog-engine' },
@@ -239,10 +264,10 @@
   function state(since) {
     const [title, artist, album, dur] = TRACKS[player.track];
     return {
-      update: null, ts: now(), host: 'DESK-PC', cfgVersion: cfgVersion(), pushVersion, evSeq: seq, rules: ['music'], rulesPaused: rulesPaused > now() ? rulesPaused : null,
+      update: null, ts: now(), host: 'DESK-PC', os: window.__demoOs || 'windows', cfgVersion: cfgVersion(), pushVersion, evSeq: seq, rules: ['music'], rulesPaused: rulesPaused > now() ? rulesPaused : null,
       events: since == null ? [] : events.filter((e) => e.seq > since),
       pc: {
-        cpu: Math.max(1, wave(37, 8, 46, 0, 6)), cpuName: 'AMD Ryzen 9 7950X 16-Core Processor', cpuTemp: wave(60, 52, 68),
+        cpu: Math.max(1, wave(37, 8, 46, 0, 6)), cpuName: 'AMD Ryzen 9 7950X 16-Core Processor', cpuTemp: wave(60, 52, 68), cpuPower: wave(41, 38, 96, 2, 4),
         ramUsedGb: wave(120, 21, 24), ramTotalGb: 64, netDownBps: Math.max(0, wave(23, 0.2e6, 9e6, 0, 1e6)), netUpBps: Math.max(0, wave(17, 40e3, 600e3, 1, 50e3)),
         uptimeSec: 3 * 86400 + 5 * 3600 + Math.floor((now() - START) / 1000),
         disks: [{ name: 'C:', usedGb: 612, totalGb: 1000 }, { name: 'D:', usedGb: 1450, totalGb: 2000 }, { name: 'E:', usedGb: 310, totalGb: 4000 }],
@@ -266,14 +291,18 @@
       privacy: (() => { const on = (now() / 1000) % 60 < 20; return { mic: on, camera: false, micApps: on ? ['Zoom'] : [], cameraApps: [] }; })(),
       obs: { streaming: !!obs.streamingSince, recording: !!obs.recordingSince, recordPaused: obs.paused },
       toggles: { ...toggles, ...Object.fromEntries(muteKeys.map((id) => [id, audio.muted])) },
+      // a face counts only for the list it was made for (an edited list starts over)
+      cycles: Object.fromEntries(Object.entries(cycles).filter(([id, v]) => cycleLists[id] === v.list).map(([id, v]) => [id, v.target])),
     };
   }
 
   const toggles = {};
+  let cycleLists = {}; // cycle key id -> its list now, as JSON
+  const cycles = {}, cyclePos = {}; // cycle keys: { target id, list } of the key that ran last, and its position in the list
   let muteKeys = ['mute']; // ids of the shortcuts whose command is builtin:mute; their state is the computer's
 
   // made-up OBS: streaming for a while, buttons and scenes work
-  const dc = { muted: false, deaf: false, in: 'c1' };
+  const dc = { muted: false, deaf: false, in: 'c1', sharing: null, chatIn: null, chatSeen: false, noteAt: now() - 60000 }; // a fixed time, as the agent's notifications have
   const obs = { streamingSince: now() - 754e3, recordingSince: 0, paused: false, scene: 'Desk', mic: false };
   function obsState() {
     return { enabled: true, control: true, snapshot: {
@@ -341,6 +370,8 @@
         codex: { model: 'Demo coding model', effort: 'high', totalTokens: 187000, totalInput: 150000, totalOutput: 37000, totalCached: 90000, totalReasoning: 12000, lastInput: 42000, contextWindow: 256000 }, limits: [
         { label: '5-hour session', percent: 12, resetsAt: n + 4.1 * 3600e3, windowSec: 18000 },
         { label: 'Weekly', percent: 27, resetsAt: n + 5.5 * 86400e3, windowSec: 604800 }] },
+      { id: 'grok', name: 'Grok', plan: 'SuperGrok', updatedAt: n - 90e3, extra: 'Grok Build 28% · Grok Chat 13%', error: null, codex: null, source: 'local', limits: [
+        { label: 'Weekly', percent: 41, resetsAt: n + 4.2 * 86400e3, windowSec: 604800 }] },
     ] };
   }
 
@@ -349,12 +380,12 @@
     const s = (i, tool, name, status, mins, waitingFor = null) => ({ id: `${tool}:${i}`, tool, name, project: name, status, waitingFor, since: n - mins * 60e3, startedAt: n - 3 * 3600e3,
       pid: 4000 + i * 211, outcome: null, model: null, effort: null, totalTokens: null, inputTokens: null, outputTokens: null, cachedInputTokens: null, reasoningTokens: null,
       lastInputTokens: null, contextWindow: null, lastTool: null, turnStartedAt: null,
-      ...(tool === 'codex' ? { model: 'Demo coding model', effort: 'high', totalTokens: 187000, inputTokens: 150000, outputTokens: 37000, cachedInputTokens: 90000, reasoningTokens: 12000, lastInputTokens: 42000, contextWindow: 256000, lastTool: 'read', turnStartedAt: n - 45000 } : {}) });
+      ...(tool === 'codex' || tool === 'grok' ? { model: tool === 'grok' ? 'grok-demo' : 'Demo coding model', effort: 'high', totalTokens: 187000, inputTokens: 150000, outputTokens: 37000, cachedInputTokens: 90000, reasoningTokens: 12000, lastInputTokens: 42000, contextWindow: 256000, lastTool: 'read', turnStartedAt: n - 45000 } : {}) });
     const pr = (repo, number, title, ci = null, review = null, draft = false, author = null) => ({ repo, number, title, ci, review, draft, author, updated: n - (number % 9 + 1) * 3600e3 });
     return {
       sessions: [s(1, 'claude', 'api-gateway', 'busy', 4), s(2, 'claude', 'docs-site', 'waiting', 2, 'approve a file edit'), s(3, 'codex', 'mobile-app', 'busy', 11),
         s(4, 'claude', 'infra', 'shell', 1), s(5, 'claude', 'blog-engine', 'idle', 38), s(6, 'codex', 'data-pipeline', 'idle', 74), s(7, 'claude', 'design-system', 'idle', 125),
-        s(8, 'cursor', 'phonebox', 'busy', 3), s(9, 'cursor', 'fueltrack', 'idle', 1)],
+        s(8, 'cursor', 'phonebox', 'busy', 3), s(9, 'cursor', 'fueltrack', 'idle', 1), s(10, 'antigravity', 'phonebox', 'busy', 2), s(11, 'grok', 'desk-widget', 'busy', 6)],
       github: { user: 'octocat', notifications: 7, error: null, updatedAt: n - 90e3,
         reviewRequests: [pr('acme/api', 412, 'Rate limiter for public endpoints', null, null, false, 'hubot'), pr('acme/web', 1288, 'Dark mode for the dashboard', null, null, false, 'monalisa'),
           pr('acme/infra', 77, 'Move staging to a new region', null, null, false, 'hubot')],
@@ -397,6 +428,12 @@
     ['f5', 'Ten keyboard shortcuts that save an hour a week', 'Tech news', 240],
     ['f6', 'Inside the factory that still makes film cameras', 'Hackaday', 420],
   ].map(([id, title, source, min]) => ({ id, title, source, published: now() - min * 60_000, openable: true }));
+  // made-up words for the made-up first song, one line every few seconds (the Synced lyrics widget)
+  const DEMO_LYRICS = [[0, ''], [8, 'Wires hum beneath the city glow'], [14, 'Every signal finds the way back home'], [21, 'Midnight circuit, keep me running'],
+    [28, 'Static lights are slowly coming'], [36, ''], [44, 'Tracing streets in amber and in blue'], [51, 'Every window flickers into view'],
+    [58, 'Midnight circuit, hold the current'], [65, 'Hearts in phase and nothing distant'], [73, 'Ooh, the line is open'], [80, 'Ooh, the night is spoken'],
+    [88, ''], [96, 'Low tide lights across the harbour wall'], [103, 'Echoes answer every time I call'], [110, 'Midnight circuit, keep me running'],
+    [117, 'Static lights are slowly coming'], [125, 'Midnight circuit'], [132, 'Keep me running'], [140, '']];
   // "pageId/widgetId", or "pageId/stackId:cardId" for a Smart Stack card (PanelWidgets.Find)
   const panelWidget = (c, key, type) => (c.pages || []).filter((p) => p.enabled !== false).flatMap((p) => (p.widgets || []).flatMap((w) =>
     // card-<i> counts every card, disabled ones too, like StackWidgets.Children and stack.js
@@ -466,6 +503,11 @@
   const spotifyTrack = (i) => ({ id: spotifyId(i), name: TRACKS[i][0], artist: TRACKS[i][1], image: 'https://i.scdn.co/image/demo' + i });
   const deckSpotify = () => ({ connected: true, current: spotifyTrack(player.track), playing: player.playing,
     queue: TRACKS.map((_, i) => i).filter((i) => i !== player.track).map(spotifyTrack) });
+  // Plex: queue item ids are digit strings, and a track carries no cover
+  const plexId = (i) => String(9000 + i);
+  const plexTrack = (i) => ({ id: plexId(i), name: TRACKS[i][0], artist: TRACKS[i][1] });
+  const deckPlex = () => ({ connected: true, current: plexTrack(player.track), playing: player.playing,
+    queue: TRACKS.map((_, i) => i).filter((i) => i !== player.track).map(plexTrack) });
   async function controlCommand(kind, q) {
     const id = q.get('id'), op = q.get('op'), value = q.has('value') ? +q.get('value') : null;
     const c = await config();
@@ -501,6 +543,15 @@
     } else if (kind === 'duck') deck.ducking = op !== 'off';
     else if (kind === 'brightness') deck.monitors[0].brightness = Math.max(0, Math.min(100, value));
     else if (kind === 'panic') { deck.audio.devices.forEach(d => d.muted = true); audio.muted = true; }
+    else if (kind === 'mics-camera-off') {
+      // ControlDeck.MicsCameraOff: the microphones only, then the OBS virtual camera (not connected when OBS is off)
+      // like the agent, held push-to-talk leases are dropped first, so ending one can't reopen a microphone
+      deckLeases.clear();
+      deck.audio.devices.filter(d => d.direction === 'input').forEach(d => d.muted = true);
+      if (c.obs?.enabled === false) return { ok: false, error: 'Microphones muted · Camera not turned off: OBS is not connected', mics: 'muted', camera: 'not-connected' };
+      const camera = deckObsExtra.cameraActive ? 'stopped' : 'off'; deckObsExtra.cameraActive = false;
+      return { ok: true, mics: 'muted', camera };
+    }
     else if (kind === 'sleep') deck.sleep = value ? [{ id, at: now() + value * 60000 }] : [];
     else if (kind === 'power-plan') {
       if (!deck.powerPlans.some(x => x.id === id)) return { ok: false, error: 'Power plan unavailable' };
@@ -547,6 +598,18 @@
       else return refused;
       return json({ ok: true });
     }
+    if (path === '/api/controls/plex/state') return json(deckPlex());
+    if (path === '/api/controls/plex/check') return json(deckPlex());
+    if (path === '/api/controls/plex/playlists') return json([{ id: '12', name: 'Chill' }, { id: '13', name: 'Focus' }]);
+    if (path.startsWith('/api/controls/plex/action/') && method === 'POST') {
+      const action = path.split('/').pop();
+      if (action === 'play-queued') {
+        const i = TRACKS.findIndex((_, n) => plexId(n) === q.get('id'));
+        if (i < 0 || i === player.track) return json({ ok: false, error: 'That queue item is no longer available' });
+        Object.assign(player, { track: i, posMs: 0, at: now(), playing: true });
+      } else if (action !== 'playlist') return json({ ok: false, error: 'Unknown Plex control' });
+      return json({ ok: true });
+    }
     if (path === '/api/controls/spotify/state') return json(deckSpotify());
     if (path.startsWith('/api/controls/spotify/action/') && method === 'POST') {
       const action = path.split('/').pop();
@@ -580,6 +643,23 @@
       store.set('pb-demo-version', cfgVersion() + 1);
       return json({ version: cfgVersion() });
     }
+    if (path.startsWith('/api/widget/') && path.endsWith('/discord-favorite') && method === 'POST') {
+      const parts = path.split('/');
+      const c = await config();
+      const pg = (c.pages || []).find((p) => p.id === decodeURIComponent(parts[3]));
+      const w = pg && (pg.widgets || []).find((x) => x.id === decodeURIComponent(parts[4]));
+      if (!w || w.type !== 'discord') return json({ error: 'option not allowed' }, 400);
+      if (!/^\d+$/.test(q.get('version') || '')) return json({ error: 'version is missing' }, 400);
+      if (+q.get('version') !== cfgVersion()) return json({ error: 'changed' }, 409); // over newer settings, as in the agent
+      const key = q.get('kind') === 'guild' ? 'favGuilds' : q.get('kind') === 'channel' ? 'favChannels' : null;
+      if (!key) return json({ error: 'kind must be guild or channel' }, 400);
+      const id = q.get('id') || '';
+      const list = (w.options?.[key] || []).filter((x) => x !== id);
+      w.options = { ...(w.options || {}), [key]: q.get('on') === 'false' ? list : [...list, id] };
+      store.set('pb-demo-config', c);
+      store.set('pb-demo-version', cfgVersion() + 1);
+      return json({ version: cfgVersion() });
+    }
     if (path === '/api/volume' && method === 'POST') {
       // the agent answers with the new volume state (AudioSnapshot)
       const op = q.get('op'), level = q.has('level') ? +q.get('level') : null;
@@ -589,6 +669,8 @@
       else return json({}, 400);
       return json({ ...audio });
     }
+    // a Now playing or Synced lyrics widget on screen asks for a fresh reading (the agent's GET /api/media, #523)
+    if (path === '/api/media' && method === 'GET') return json({ media: state(null).media });
     if (path.startsWith('/api/media/') && method === 'POST') return json({}, mediaAction(path.slice(11), q.has('ms') ? +q.get('ms') : null, q.get('session')) ? 200 : 400);
     if (path === '/api/procs/kill' && method === 'POST') {
       // KillResult; refused unless an enabled page has a processes widget that allows it (AgentConfig.AllowKill)
@@ -601,28 +683,148 @@
     }
     if (path.startsWith('/api/run/') && method === 'POST') {
       // on / off keys flip in the demo; the mute key mutes the made-up computer
-      const id = decodeURIComponent(path.slice(9)), sc = (await config()).shortcuts.find((s) => s.id === id);
+      const id = decodeURIComponent(path.slice(9)), shortcuts = (await config()).shortcuts;
+      let sc = shortcuts.find((s) => s.id === id);
+      // ?hold=true runs the key's long-press shortcut instead (the agent resolves it; the phone sends only the held key's id)
+      if (sc && q.get('hold') === 'true') sc = sc.longPress && sc.longPress !== sc.id ? shortcuts.find((s) => s.id === sc.longPress) : null;
       if (!sc) return json({ title: 'An error occurred while processing your request.', status: 500, detail: 'unknown shortcut' }, 500);
-      if (sc.cmd === 'builtin:mute') audio.muted = !audio.muted;
-      else if (sc.toggle) toggles[id] = !toggles[id];
+      if (sc.cmd === 'builtin:cycle') {
+        const list = JSON.stringify(sc.cycle || []), n = (sc.cycle || []).length;
+        if (cyclePos[sc.id]?.list !== list) cyclePos[sc.id] = { list, at: -1 }; // an edited list starts over
+        if (n) { const at = cyclePos[sc.id].at = (cyclePos[sc.id].at + 1) % n; cycles[sc.id] = { target: sc.cycle[at], list }; }
+      }
+      else if (sc.cmd === 'builtin:mute') audio.muted = !audio.muted;
+      else if (sc.toggle) toggles[sc.id] = !toggles[sc.id];
       return json({});
     }
     if (path === '/api/quotas') return json(quotas());
+    // made-up recent messages and steps of a Claude Code session (the real ones come from its chat file, and only when switched on)
+    if (path === '/api/work/conversation') {
+      const n = Date.now();
+      return json({ enabled: true,
+        messages: [
+          { role: 'user', text: 'Add a retry to the upload helper', at: n - 9 * 60e3 },
+          { role: 'assistant', text: 'I added three retries with a short pause between them and a test for the failing case.', at: n - 7 * 60e3 },
+          { role: 'user', text: 'Does it also cover timeouts?', at: n - 2 * 60e3 },
+          { role: 'assistant', text: 'Yes, a timeout counts as a failed attempt and is retried the same way.', at: n - 60e3 },
+        ],
+        steps: [
+          { tool: 'Read', detail: 'upload.js', at: n - 8 * 60e3, running: false },
+          { tool: 'Edit', detail: 'upload.js', at: n - 7 * 60e3, running: false },
+          { tool: 'Bash', detail: 'npm', at: n - 20e3, running: true },
+        ] });
+    }
     if (path === '/api/calendar') return json(calendar());
     if (path === '/api/docker') return json({ ...docker(), control: allows(await config(), (t) => t === 'docker') });
     if (path === '/api/obs') { const c = await config(); return json({ ...obsState(), enabled: c.obs?.enabled !== false, control: widgets(c).some((w) => w.type === 'obs' && w.options?.control === true) }); }
     if (path === '/api/discord') {
       const c = await config();
-      return json({ enabled: true, control: widgets(c).some((w) => w.type === 'discord' && w.options?.control === true), snapshot: {
+      // who is in Lounge: only when a widget that shows channels wants it, as the agent does (DiscordFavorites.WantedRooms)
+      const lounge = shownWidgets(c).some((w) => w.type === 'discord' && w.options?.channels !== false
+        && ((w.options?.favChannels || []).includes('c3') || ((w.options?.favGuilds || []).includes('g1') && !(w.options?.favChannels || []).includes('c1'))));
+      if (!dcOn(c)) return json({ enabled: false, share: false, shareState: false, chat: false, chatUnread: false, control: false, joinControl: false, widgetControl: false, snapshot: null });
+      return json({ enabled: true, share: dcShare(c), shareState: dcShareState(c), chat: dcChat(c), chatUnread: dcChat(c) && !dc.chatSeen, control: dcVoice(c), joinControl: dcVoice(c, 'join'), widgetControl: dcControl(c), snapshot: {
         connected: true, error: null, user: 'demo', muted: dc.muted, deafened: dc.deaf, channelId: dc.in, channelName: dc.in ? 'Game night' : null, channelKind: dc.in ? 'voice' : null,
-        members: dc.in ? [{ id: '1', name: 'demo', muted: dc.muted, deafened: dc.deaf }, { id: '2', name: 'Ada', muted: false, deafened: false }, { id: '3', name: 'Linus', muted: true, deafened: false }] : [],
-        channels: [{ id: 'c1', name: 'Game night', guild: 'Friends' }, { id: 'c2', name: 'Stand-up', guild: 'Work' }],
-        notifications: [{ ts: now() - 60000, title: 'Ada', body: 'are you joining?' }] } });
+        inputMode: dc.ptt ? 'PUSH_TO_TALK' : 'VOICE_ACTIVITY', pttKey: true,
+        members: dc.in ? [{ id: '1', name: 'demo', muted: dc.muted, deafened: dc.deaf }, { id: '2', name: 'Ada', muted: false, deafened: false, speaking: Math.floor(now() / 1500) % 2 === 0 }, { id: '3', name: 'Linus', muted: true, deafened: false }] : [],
+        channels: [{ id: 'c1', name: 'Game night', guild: 'Friends', guildId: 'g1' }, { id: 'c3', name: 'Lounge', guild: 'Friends', guildId: 'g1',
+          people: lounge ? [{ id: '4', name: 'Grace', muted: false, deafened: false }, { id: '5', name: 'Alan', muted: true, deafened: false }] : null },
+          { id: 'c2', name: 'Stand-up', guild: 'Work', guildId: 'g2' }],
+        notifications: [{ ts: dc.noteAt, title: 'Ada', body: 'are you joining?' }] } });
+    }
+    if (path === '/api/steam') return json({ enabled: true, snapshot: {
+      connected: true, error: null, totalFriends: 2, onlineCount: 1, updated: now(),
+      friends: [
+        { id: '76561198000000001', name: 'Ada', state: 1, game: 'Hades II', hasAvatar: true, lastLogoff: null },
+        { id: '76561198000000002', name: 'Linus', state: 0, game: null, hasAvatar: true, lastLogoff: Math.floor(now() / 1000) - 7200 },
+      ],
+      activity: [{ id: '76561198000000001', name: 'Ada', hasAvatar: true, kind: 'playing', game: 'Hades II', at: now() - 180000 }],
+    } });
+    // the Steam library as the agent reads it from Steam's files: made-up games, covers drawn below
+    if (path === '/api/steam/library') {
+      const c = await config();
+      const mine = shownWidgets(c).filter((w) => w.type === 'steam-library');
+      return json({ enabled: mine.length > 0, found: true, error: null, running: '900010',
+        games: DEMO_GAMES.map(([id, name, hoursAgo, state, progress]) => ({ id, name, lastPlayed: hoursAgo == null ? 0 : Math.floor(now() / 1000) - hoursAgo * 3600,
+          sizeGb: 12.5, state, progress, cover: true })) });
+    }
+    if (path === '/api/steam/games') return json(DEMO_GAMES.map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name)));
+    if (path === '/api/steam/launch' && method === 'POST') {
+      // the asking widget's own option, like the agent (PanelWidgets.Find): another widget's does not count
+      if (panelWidget(await config(), q.get('widget'), 'steam-library')?.options?.allowLaunch !== true) {
+        return json({ error: 'Turn on "Let the phone start games" in this Steam library widget\'s settings', code: 'off' }, 400);
+      }
+      return DEMO_GAMES.some((g) => g[0] === q.get('id')) ? json({ ok: true }) : json({ error: 'That game is not installed', code: 'notinstalled' }, 400);
+    }
+    // timed lyrics for the first made-up song, plain ones for the second, none for the third (LRCLIB is not asked)
+    if (path === '/api/lyrics') {
+      // the asking widget's own lookup option, like the agent (PanelWidgets.Find): another widget's does not count
+      if (panelWidget(await config(), q.get('widget'), 'lyrics')?.options?.lookup !== true) return json({ status: 'off' });
+      const [title, artist] = TRACKS[player.track];
+      const stamp = (s) => `[${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}.00]`;
+      if (player.track === 0) return json({ status: 'ok', title, artist, synced: DEMO_LYRICS.map(([s, l]) => `${stamp(s)} ${l}`).join('\n'), plain: DEMO_LYRICS.map((x) => x[1]).join('\n'), instrumental: false });
+      if (player.track === 1) return json({ status: 'ok', title, artist, synced: null, plain: DEMO_LYRICS.slice(1, 7).map((x) => x[1]).join('\n'), instrumental: false });
+      return json({ status: 'notfound', title, artist });
+    }
+    if (path === '/api/steam/avatar') {
+      const ada = q.get('id') === '76561198000000001';
+      const letter = ada ? 'A' : 'L', fill = ada ? '#7c3aed' : '#2563eb';
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96"><rect width="96" height="96" rx="48" fill="${fill}"/><text x="48" y="64" font-family="system-ui,sans-serif" font-size="48" font-weight="700" text-anchor="middle" fill="#fff">${letter}</text></svg>`;
+      return new Response(svg, { headers: { 'Content-Type': 'image/svg+xml' } });
+    }
+    if (path === '/api/discord/share') {
+      // screen share (off unless discord.screenShare is on): a few running apps; only the game shares directly
+      const sc = await config();
+      if (!dcShareState(sc)) return json({ enabled: false });
+      // the agent reads it as a bool: anything but true or false is refused, as ASP.NET does
+      if (q.has('apps') && !/^(true|false)$/i.test(q.get('apps'))) return json({}, 400);
+      // the app list and the name of what is shared only for the Discord widget's share view, as the agent does
+      const withApps = /^true$/i.test(q.get('apps') || '') && dcShare(sc);
+      return json({ enabled: true, ready: true, inCall: !!dc.in, active: !!dc.sharing, name: withApps ? dc.sharing : null,
+        apps: withApps ? [{ pid: 4242, name: 'Space Racers' }, { pid: 77, name: 'Firefox' }, { pid: 91, name: 'Visual Studio Code' }] : null });
+    }
+    if (path.startsWith('/api/discord/share/') && method === 'POST') {
+      const c = await config();
+      const no = (code, error) => json({ error, code }, 400); // DiscordShareError
+      const a = path.slice(19);
+      // the current-channel bar may only stop a share
+      if (!dcControl(c) && !(a === 'stop' && dcBar(c))) return no('control', "controlling Discord is turned off in the widget's settings");
+      if (c.discord?.screenShare !== true) return no('off', 'screen share is turned off');
+      if (a === 'stop') dc.sharing = null;
+      else if (!dc.in) return no('noCall', 'join a voice channel first');
+      else if (dc.sharing) return no('sharing', 'you are already sharing');
+      else if (a === 'pick') dc.sharing = 'Screen 1';
+      else if (a === 'app' && q.get('pid') === '4242') dc.sharing = 'Space Racers';
+      else if (a === 'app') return no('notDirect', 'Discord can\'t share this app directly: use "Choose on PC"');
+      else return no('failed', 'unknown action');
+      return json({ ok: true });
+    }
+    if (path === '/api/discord/chat') {
+      // read-only chat (off unless discord.chat is on): one server with two text channels, a few messages
+      if (!dcChat(await config())) return json({ enabled: false });
+      // the agent reads it as a bool: anything but true or false is refused, as ASP.NET does
+      if (q.has('picker') && !/^(true|false)$/i.test(q.get('picker'))) return json({}, 400);
+      const picker = /^true$/i.test(q.get('picker') || '');
+      if (!picker) dc.chatSeen = true;
+      const text = { t1: ['general', [['Ada', 'are you joining?'], ['Linus', 'in 5 min']]], t2: ['memes', [['Ada', 'look at this']]] };
+      const id = dc.chatIn ?? (dc.in ? 'c1' : null);
+      const msgs = id === null || picker ? [] : (text[id]?.[1] ?? [['Ada', 'hi from the call']]).map(([author, body], i) => ({ id: id + i, author, authorId: author, avatar: null, color: null, bot: false, text: body, ts: now() - (5 - i) * 60e3, attachments: 0, embed: null }));
+      return json({ enabled: true, ready: true, picker, voice: !dc.chatIn, callName: dc.in ? 'Game night' : null,
+        channel: id === null ? null : { id, name: text[id]?.[0] ?? 'Game night', guild: 'Friends', voice: !dc.chatIn }, messages: msgs,
+        servers: [{ id: 'g1', name: 'Friends', icon: null, unread: !dc.chatSeen }],
+        channels: picker && q.get('guild') === 'g1' ? [{ id: 't1', name: 'general', unread: !dc.chatSeen }, { id: 't2', name: 'memes', unread: false }] : null });
+    }
+    if (path === '/api/discord/chat/choose' && method === 'POST') { const ch = q.get('channel'); dc.chatIn = ch === 'voice' ? null : ch; return json({ ok: true }); }
+    if (path === '/api/discord/chat/open' && method === 'POST') {
+      const c = await config();
+      if (!dcControl(c)) return json({ error: "controlling Discord is turned off in the widget's settings" }, 400);
+      return dcChat(c) ? json({ ok: true }) : json({ error: 'the chat is turned off' }, 400);
     }
     if (path.startsWith('/api/discord/') && method === 'POST') {
-      if (!allows(await config(), (t) => t === 'discord')) return json({ error: "controlling Discord is turned off in the widget's settings" }, 400);
+      const dcCfg = await config();
       const a = path.slice(13);
-      if (a === 'mute') dc.muted = !dc.muted; else if (a === 'deafen') dc.deaf = !dc.deaf; else if (a === 'leave') dc.in = null; else if (a === 'join') dc.in = q.get('channel'); else return json({ error: 'unknown action' }, 400);
+      if (!dcVoice(dcCfg, a)) return json({ error: "controlling Discord is turned off in the widget's settings and in Settings › General › Discord" }, 400);
+      if (a === 'mute') dc.muted = !dc.muted; else if (a === 'deafen') dc.deaf = !dc.deaf; else if (a === 'inputmode') dc.ptt = !dc.ptt; else if (a === 'leave') dc.in = null; else if (a === 'join') dc.in = q.get('channel'); else return json({ error: 'unknown action' }, 400);
       return json({ ok: true });
     }
     if (path === '/api/phones') return json([
@@ -924,6 +1126,13 @@
   const sessionArt = (kind) => 'data:image/svg+xml,' + encodeURIComponent(kind === 'netflix'
     ? '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96"><defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3b0a0d"/><stop offset="1" stop-color="#0b0b0f"/></linearGradient></defs><rect width="96" height="96" fill="url(#g)"/><circle cx="64" cy="30" r="14" fill="#e50914" opacity=".85"/><path d="M0 70 30 52 52 64 96 40v56H0z" fill="#1c1c24"/></svg>'
     : '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2b5876"/><stop offset="1" stop-color="#4e4376"/></linearGradient></defs><rect width="96" height="96" fill="url(#g)"/><g stroke="#cfe3ff" stroke-opacity=".5" stroke-width="1.5"><path d="M14 8v14M30 20v10M48 6v16M66 18v12M82 8v14M22 40v12M58 38v10M76 44v12"/></g><rect x="20" y="58" width="56" height="26" rx="4" fill="#f4b860" opacity=".9"/></svg>');
+  // a portrait capsule for a made-up game: its colour and its name
+  const gameCover = (id) => {
+    const [, name = '?', , , , hue = 210] = DEMO_GAMES.find((g) => g[0] === id) || [];
+    const words = name.split(' ').map((w, i) => `<text x="100" y="${190 + i * 34}" font-family="system-ui,sans-serif" font-size="30" font-weight="800" text-anchor="middle" fill="#fff">${w}</text>`).join('');
+    return 'data:image/svg+xml,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 300"><defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1">`
+      + `<stop offset="0" stop-color="hsl(${hue} 70% 45%)"/><stop offset="1" stop-color="hsl(${hue + 40} 60% 14%)"/></linearGradient></defs><rect width="200" height="300" fill="url(#g)"/>${words}</svg>`);
+  };
   const swapDemoImg = (img) => {
     if (img.tagName !== 'IMG') return;
     const src = img.getAttribute('src') || '';
@@ -936,6 +1145,7 @@
       const hue = [...a.name].reduce((n, c) => n + c.charCodeAt(0), 0) * 37 % 360;
       img.src = 'data:image/svg+xml,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96"><rect x="6" y="6" width="84" height="84" rx="22" fill="hsl(${hue} 60% 50%)"/><text x="48" y="62" font-family="system-ui,sans-serif" font-size="42" font-weight="700" text-anchor="middle" fill="#fff">${a.name.slice(0, 1)}</text></svg>`);
     }
+    else if (/\/api\/steam\/cover/.test(src)) img.src = gameCover(new URL(src, location.href).searchParams.get('id'));
   };
   new MutationObserver((list) => {
     for (const m of list) {

@@ -46,4 +46,5 @@
     <string name="widget_prev">Bài trước</string>
     <string name="widget_playpause">Phát / tạm dừng</string>
     <string name="widget_next">Bài tiếp</string>
+    <string name="webview_failed">Bảng điều khiển không thể chạy trên điện thoại này: Android không khởi động được WebView. Một số điện thoại Android 5 không chạy được các phiên bản WebView mà PhoneBox cần.</string>
 </resources>

@@ -14,6 +14,7 @@ public sealed partial class ControlDeck : BackgroundService
     private readonly IDeckNative _native;
     private readonly Func<long> _now;
     private readonly SpotifyControl? _spotify;
+    private readonly PlexControl? _plex;
     private readonly ControlTasks _tasks;
     private readonly MicrophoneLeases _ptt;
     // Serializes push-to-talk with panic, so a hold cannot begin between panic dropping the leases and muting.
@@ -39,12 +40,17 @@ public sealed partial class ControlDeck : BackgroundService
     private Task? _hardwareJob;
     private long _hardwareAt;
     private IReadOnlyList<DeckMonitor> _monitors = [];
+    // Brightness levels set since the running monitor read began (guarded by _state): that read may have seen the monitor
+    // before the set, and must not bring the old level back for the next 30 s (#360).
+    private readonly Dictionary<string, int> _brightnessSet = new(StringComparer.Ordinal);
+    private readonly object _brightnessGate = new();
     private IReadOnlyList<DeckItem> _plans = [], _midi = [];
 
     private readonly PushStore? _push;
     private readonly AudioControl? _master;
-    public ControlDeck(ConfigStore config, AudioControl audio, MediaMonitor media, ILogger<ControlDeck> log, SpotifyControl spotify, PushStore push)
-        : this(config, CreateNative(audio, media, log), log, null, push, audio, spotify) { }
+    private readonly IVirtualCamera? _camera;
+    public ControlDeck(ConfigStore config, AudioControl audio, MediaMonitor media, ILogger<ControlDeck> log, SpotifyControl spotify, PlexControl plex, PushStore push, ObsMonitor obs)
+        : this(config, CreateNative(audio, media, log), log, null, push, audio, spotify, plex: plex, camera: obs) { }
 
     private static IDeckNative CreateNative(AudioControl audio, MediaMonitor media, ILogger log)
     {
@@ -54,9 +60,9 @@ public sealed partial class ControlDeck : BackgroundService
         return new PortableDeckNative(audio, media);
 #endif
     }
-    internal ControlDeck(ConfigStore config, IDeckNative native, ILogger<ControlDeck> log, Func<long>? now = null, PushStore? push = null, AudioControl? master = null, SpotifyControl? spotify = null, RadioLogoCache? logos = null)
+    internal ControlDeck(ConfigStore config, IDeckNative native, ILogger<ControlDeck> log, Func<long>? now = null, PushStore? push = null, AudioControl? master = null, SpotifyControl? spotify = null, RadioLogoCache? logos = null, PlexControl? plex = null, IVirtualCamera? camera = null)
     {
-        _config = config; _log = log; _push = push; _master = master; _spotify = spotify;
+        _config = config; _log = log; _push = push; _master = master; _spotify = spotify; _plex = plex; _camera = camera;
         _now = now ?? (() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
         _tasks = new(config, log);
         _native = native;
@@ -74,6 +80,37 @@ public sealed partial class ControlDeck : BackgroundService
             return _audio = _native.Audio();
         }
     }
+    private DeckAudio AudioForPhone()
+    {
+        var audio = Audio();
+        if (!audio.Available || audio.Sessions.Count == 0) return audio;
+        var defaultOutput = audio.Defaults?.GetValueOrDefault("output:1");
+        var sessions = audio.Sessions
+            .Where(s => s.Active || s.Pid == 0)
+            .GroupBy(ApplicationKey, StringComparer.Ordinal)
+            .Select(group =>
+            {
+                var representative = group.FirstOrDefault(s => s.DeviceId == defaultOutput) ?? group.First();
+                return representative with
+                {
+                    Id = "application:" + group.Key,
+                    Peak = group.Max(s => s.Peak),
+                };
+            })
+            .ToArray();
+        return audio with { Sessions = sessions };
+    }
+    private static string ApplicationKey(DeckSession session)
+    {
+        var name = session.Name.Trim();
+        if (name.Length == 0 || name.Equals("Application", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(session.ProcessName))
+            return "session:" + session.Id;
+        return name.ToLowerInvariant();
+    }
+    private static bool MatchesApplication(DeckSession session, string value) =>
+        ApplicationKey(session).Equals(value, StringComparison.OrdinalIgnoreCase)
+        || session.Name.Equals(value, StringComparison.OrdinalIgnoreCase)
+        || session.ProcessName?.Equals(value, StringComparison.OrdinalIgnoreCase) == true;
     private void Invalidate() { lock (_state) _audio = null; }
 
     private bool TryMute(string id)
@@ -101,7 +138,7 @@ public sealed partial class ControlDeck : BackgroundService
         lock (_state) sleep = _sleep.Select(p => (object)new { id = p.Key, at = p.Value }).ToArray();
         return new
         {
-            platform = AppPaths.Os, audio = Audio(), media, mediaError,
+            platform = AppPaths.Os, audio = AudioForPhone(), media, mediaError,
             monitors = _monitors, powerPlans = _plans, midi = _midi, hardwareLoading = _hardwareJob?.IsCompleted == false,
             actions = c.Controls.Actions.Where(a => a.Enabled).Select(Describe).ToArray(),
             shortcuts = c.Shortcuts.Select(DescribeShortcut),
@@ -122,13 +159,24 @@ public sealed partial class ControlDeck : BackgroundService
         {
             if (_hardwareJob?.IsCompleted == false || Environment.TickCount64 - _hardwareAt < 30_000) return;
             _hardwareAt = Environment.TickCount64;
+            _brightnessSet.Clear(); // the read below starts after every set so far, so it sees them
             _hardwareJob = Task.Run(() =>
             {
-                try { _monitors = _native.Monitors(); _plans = _native.PowerPlans(); _midi = _native.MidiPorts(); }
+                try
+                {
+                    var monitors = _native.Monitors();
+                    lock (_state) _monitors = WithBrightnessSet(monitors);
+                    _plans = _native.PowerPlans(); _midi = _native.MidiPorts();
+                }
                 catch (Exception ex) { _log.LogDebug(ex, "Control hardware discovery failed"); }
             });
         }
     }
+
+    /// <summary>The monitors with the brightness levels set since the running read began. Call under <c>_state</c>.</summary>
+    private IReadOnlyList<DeckMonitor> WithBrightnessSet(IReadOnlyList<DeckMonitor> monitors) =>
+        _brightnessSet.Count == 0 ? monitors
+            : monitors.Select(m => _brightnessSet.TryGetValue(m.Id, out var level) ? m with { Brightness = level } : m).ToArray();
 
     /// <summary>Returns a draft for the desktop editor; saving still uses the ordinary config version check.</summary>
     public DeckProfile CaptureProfile()
@@ -138,7 +186,7 @@ public sealed partial class ControlDeck : BackgroundService
         return new DeckProfile { Id = "profile-" + Guid.NewGuid().ToString("N")[..12], Label = "Audio profile",
             Defaults = audio.Defaults?.ToDictionary(p => p.Key, p => p.Value) ?? [],
             Levels = audio.Devices.Where(d => d.CanControl).Select(d => new DeckLevel("device", d.Id, d.Volume, d.Muted))
-                .Concat(audio.Sessions.GroupBy(s => s.Name, StringComparer.OrdinalIgnoreCase).Select(g => new DeckLevel("application", g.Key, g.First().Volume, g.First().Muted))).ToList() };
+                .Concat(audio.Sessions.GroupBy(ApplicationKey, StringComparer.Ordinal).Select(g => new DeckLevel("application", g.Key, g.First().Volume, g.First().Muted))).ToList() };
     }
 
     public string TaskOutput(string id) => _tasks.Output(id);
@@ -169,7 +217,19 @@ public sealed partial class ControlDeck : BackgroundService
                     ok = _native.Device(id, value, muted, op is "left" ? 0 : op is "right" ? 1 : null); break;
                 case "session":
                     if (value is null && muted is null) return new(false, "Choose a volume or mute state");
-                    if (!Audio().Sessions.Any(s => s.Id == id) || value is < 0 or > 100) return new(false, "Application audio session ended");
+                    if (value is < 0 or > 100) return new(false, "Choose a valid volume");
+                    if (id.StartsWith("application:", StringComparison.Ordinal))
+                    {
+                        var applicationName = id["application:".Length..];
+                        var sessions = Audio().Sessions
+                            .Where(s => MatchesApplication(s, applicationName)).ToArray();
+                        if (sessions.Length == 0) return new(false, "Application audio session ended");
+                        ok = true;
+                        foreach (var session in sessions)
+                            ok = _native.Session(session.Id, value, muted) && ok;
+                        break;
+                    }
+                    if (!Audio().Sessions.Any(s => s.Id == id)) return new(false, "Application audio session ended");
                     ok = _native.Session(id, value, muted); break;
                 case "default":
                     if (op is not ("" or "all" or "media" or "communications" or "console")) return new(false, "Unknown audio role");
@@ -228,12 +288,21 @@ public sealed partial class ControlDeck : BackgroundService
                         }
                     }
                     break;
+                case "mics-camera-off": return await MicsCameraOff(ct);
                 case "sound-stop":
                     if (string.IsNullOrEmpty(id)) { StopAllRadios(clearLast: true); _native.StopSound(null); }
                     else { StopRadio(id, clearLast: true); }
                     ok = true; break;
                 case "action": return await Action(id, op, value, ct);
-                case "brightness": ok = value is >= 0 and <= 100 && _native.Brightness(id, value.Value); break;
+                case "brightness":
+                    // one set at a time, so the level shown is the one the monitor got last when a drag sends sets at once
+                    lock (_brightnessGate)
+                    {
+                        ok = value is >= 0 and <= 100 && _native.Brightness(id, value.Value);
+                        // shown at once: the next monitor read can be up to 30 s away (#360)
+                        if (ok) lock (_state) { _brightnessSet[id] = value!.Value; _monitors = WithBrightnessSet(_monitors); }
+                    }
+                    break;
                 case "desktop": ok = value is -1 or 1 && await _native.PlatformAction("desktop", "", null, value.Value, ct); break;
                 case "power-plan": ok = _native.PowerPlans().Any(p => p.Id == id) && await _native.PlatformAction("power-plan", id, null, 0, ct); break;
                 case "power-arm":
@@ -243,7 +312,7 @@ public sealed partial class ControlDeck : BackgroundService
                     if (!_config.Get().Controls.AllowPower || lease is null || !_power.Consume(lease, id)) return new(false, "Hold the power button to confirm");
                     ok = await _native.PlatformAction("power", id, null, 0, ct); break;
                 case "lock": case "monitor-off":
-                    ok = Shortcuts.Execute(new Shortcut { Cmd = "builtin:" + kind, Label = kind }, _log) is null; break;
+                    ok = Shortcuts.Execute(new Shortcut { Cmd = "builtin:" + kind, Label = kind }, _log, _config.Get()) is null; break;
                 default: return new(false, "Unknown control action");
             }
             Invalidate();
@@ -251,6 +320,61 @@ public sealed partial class ControlDeck : BackgroundService
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception ex) { _log.LogDebug(ex, "Control {Kind} failed", kind); return new(false, "Control failed; check the computer's integration settings"); }
+    }
+
+    /// <summary>
+    /// "Mics off, camera off" (#387): mutes every controllable microphone the way panic does, but leaves the outputs
+    /// alone, then stops the OBS virtual camera. Never reports a camera as off unless OBS stopped it or it was off.
+    /// </summary>
+    private async Task<DeckResult> MicsCameraOff(CancellationToken ct)
+    {
+        var audio = _native.Audio();
+        var mics = audio.Available ? audio.Devices.Where(d => d.CanControl && d.Direction == "input").ToArray() : [];
+        string micState;
+        if (mics.Length == 0) micState = "unavailable";
+        else
+        {
+            var all = true;
+            // the same gate as panic: no push-to-talk hold can begin, or reopen a microphone, between the mutes
+            lock (_pttGate)
+            {
+                _ptt.AbandonAll();
+                foreach (var mic in mics)
+                {
+                    var mutedNow = TryMute(mic.Id);
+                    if (mutedNow) _panicPending.Remove(mic.Id);
+                    else _panicPending.Add(mic.Id); // retried, and push-to-talk refused, until the mute lands
+                    all &= mutedNow;
+                }
+            }
+            micState = all ? "muted" : "pending";
+        }
+        // the camera step runs even when no microphone could be muted
+        VirtualCameraStop camera;
+        try { camera = _camera is null ? VirtualCameraStop.NotConnected : await _camera.StopVirtualCamAsync(ct); }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception ex) { _log.LogDebug(ex, "Stopping the OBS virtual camera failed"); camera = VirtualCameraStop.Failed; }
+        var cameraState = camera switch
+        {
+            VirtualCameraStop.Stopped => "stopped", VirtualCameraStop.AlreadyOff => "off",
+            VirtualCameraStop.NotConnected => "not-connected", _ => "failed",
+        };
+        var ok = micState == "muted" && camera is VirtualCameraStop.Stopped or VirtualCameraStop.AlreadyOff;
+        var micText = micState switch
+        {
+            "muted" => "Microphones muted",
+            "pending" => "A microphone could not be muted; retrying",
+            _ => "No microphone could be muted",
+        };
+        var cameraText = cameraState switch
+        {
+            "stopped" => "OBS virtual camera stopped",
+            "off" => "OBS virtual camera was already off",
+            "not-connected" => "Camera not turned off: OBS is not connected",
+            _ => "Camera not turned off: OBS did not stop the virtual camera",
+        };
+        _log.LogInformation("Mics off, camera off: {Mics}; {Camera}", micText, cameraText);
+        return new(ok, ok ? null : micText + " · " + cameraText, Mics: micState, Camera: cameraState);
     }
 
     private async Task<DeckResult> Profile(string id, CancellationToken ct)
@@ -274,7 +398,7 @@ public sealed partial class ControlDeck : BackgroundService
             {
                 if (level.Kind == "application")
                 {
-                    foreach (var session in before.Sessions.Where(s => string.Equals(s.Name, level.Id, StringComparison.OrdinalIgnoreCase)))
+                    foreach (var session in before.Sessions.Where(s => MatchesApplication(s, level.Id)))
                         if (!_native.Session(session.Id, level.Volume, level.Muted)) return new(false, "An application level could not be restored");
                     continue;
                 }
@@ -361,6 +485,14 @@ public sealed partial class ControlDeck : BackgroundService
                 return await RunWithMediaFocusAsync(async token =>
                 {
                     var res = await _spotify.Act("playlist", action.Id, token);
+                    if (res.Ok) StopAllRadios(clearLast: true);
+                    return res;
+                }, ct);
+            case "plex-playlist":
+                if (_plex is null) return new(false, "Plex is unavailable");
+                return await RunWithMediaFocusAsync(async token =>
+                {
+                    var res = await _plex.Act("playlist", action.Id, token);
                     if (res.Ok) StopAllRadios(clearLast: true);
                     return res;
                 }, ct);

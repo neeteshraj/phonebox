@@ -1,13 +1,15 @@
 namespace PhoneBox.Agent;
 
-/// <param name="Mic">Whether an app is using a microphone; null where this cannot be detected (macOS).</param>
+/// <param name="Mic">Whether an app is using a microphone; null where this cannot be detected.</param>
 public sealed record PrivacySnapshot(bool? Mic, bool? Camera, IReadOnlyList<string> MicApps, IReadOnlyList<string> CameraApps);
 
 /// <summary>
 /// Is the microphone or the camera in use, and by which app? For the "On air" widget and rules.
-///  - Windows: the privacy consent store (the same data as the microphone / camera icons in the taskbar).
+///  - Windows: recording sessions on the microphones (Core Audio) and the camera streams Media Foundation reports.
+///    The privacy consent store (behind the taskbar's microphone and camera icons) is the fallback where those can't
+///    be read: Windows 11 stopped updating it in late 2026 builds (26200 with the October updates, 26300).
 ///  - Linux: ALSA capture streams that are running, and processes with a /dev/video* device open.
-///  - macOS: not detectable without extra permissions; reported as unknown.
+///  - macOS: what the menu bar's microphone and camera dots show, from CoreAudio and CoreMediaIO (see Unix/MacPrivacyProbe.cs).
 /// </summary>
 public sealed class PrivacyMonitor(ILogger<PrivacyMonitor> log) : BackgroundService
 {
@@ -17,7 +19,6 @@ public sealed class PrivacyMonitor(ILogger<PrivacyMonitor> log) : BackgroundServ
 
     protected override async Task ExecuteAsync(CancellationToken ct)
     {
-        if (OperatingSystem.IsMacOS()) { _snap = new(null, null, [], []); return; }
         string? lastLog = null;
         while (!ct.IsCancellationRequested)
         {
@@ -36,15 +37,69 @@ public sealed class PrivacyMonitor(ILogger<PrivacyMonitor> log) : BackgroundServ
     private static (List<string> Mic, List<string> Camera) Read()
     {
 #if WINDOWS
+        var mic = CaptureSessions();
+        var camera = CameraActivity.Streaming();
+        if (mic is not null && camera is not null) return (mic, camera);
         var running = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var p in System.Diagnostics.Process.GetProcesses()) using (p) { try { running.Add(p.ProcessName); } catch { } }
-        return (ConsentStore("microphone", running), ConsentStore("webcam", running));
+        return (mic ?? ConsentStore("microphone", running), camera ?? ConsentStore("webcam", running));
 #else
-        return (LinuxMic(), LinuxCamera());
+        return OperatingSystem.IsMacOS() ? MacPrivacyProbe.Read() : (LinuxMic(), LinuxCamera());
 #endif
     }
 
+    /// <summary>The session's own name, or the process name; "Windows" for the system's own sessions.</summary>
+    internal static string SessionName(int pid, string? displayName)
+    {
+        if (!string.IsNullOrWhiteSpace(displayName) && !displayName.StartsWith('@')) return displayName.Trim();
+        if (pid == 0) return "Windows";
+        return ProcessName(pid) ?? "an app";
+    }
+
+    internal static List<string> Distinct(IEnumerable<string> apps) =>
+        apps.Where(n => !string.IsNullOrWhiteSpace(n)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
+    internal static string? ProcessName(int pid)
+    {
+        try { using var p = System.Diagnostics.Process.GetProcessById(pid); return p.ProcessName; } catch { return null; }
+    }
+
 #if WINDOWS
+    /// <summary>
+    /// Apps with a recording session that is running (not just open) on any active microphone; null when Core Audio
+    /// can't be read.
+    /// </summary>
+    private static List<string>? CaptureSessions()
+    {
+        var apps = new List<string>();
+        try
+        {
+            using var en = new NAudio.CoreAudioApi.MMDeviceEnumerator();
+            using var all = en.EnumerateAudioEndPoints(NAudio.CoreAudioApi.DataFlow.Capture, NAudio.CoreAudioApi.DeviceState.Active);
+            foreach (var d in all)
+            using (d)
+            {
+                try
+                {
+                    var list = d.AudioSessionManager.Sessions;
+                    for (var i = 0; i < list.Count; i++)
+                    using (var s = list[i])
+                    {
+                        try
+                        {
+                            if (s.State != NAudio.CoreAudioApi.Interfaces.AudioSessionState.AudioSessionStateActive) continue;
+                            apps.Add(SessionName((int)s.GetProcessID, s.DisplayName));
+                        }
+                        catch (System.Runtime.InteropServices.COMException) { /* the session ended meanwhile */ }
+                    }
+                }
+                catch (Exception ex) when (ex is System.Runtime.InteropServices.COMException or InvalidOperationException) { }
+            }
+        }
+        catch (Exception ex) when (ex is System.Runtime.InteropServices.COMException or InvalidOperationException or NotSupportedException) { return null; }
+        return Distinct(apps);
+    }
+
     /// <summary>
     /// Apps whose last use of the capability has started but not stopped. An app that crashed mid-call leaves such an
     /// entry behind, so desktop apps must still be running, and store apps must have started within 12 hours.

@@ -91,7 +91,8 @@ public sealed class ProcessMonitor(ILogger<ProcessMonitor> log, SessionMonitor s
         }
     }
 
-    private void Sample()
+    /// <summary>For tests and the sampling loop. On macOS includes PID 0 (<c>kernel_task</c>); elsewhere PID 0 is skipped.</summary>
+    internal void Sample()
     {
         var now = Stopwatch.GetTimestamp();
         var elapsed = _lastTs == 0 ? 0 : (now - _lastTs) / (double)Stopwatch.Frequency;
@@ -99,7 +100,8 @@ public sealed class ProcessMonitor(ILogger<ProcessMonitor> log, SessionMonitor s
 
         var cpuNow = new Dictionary<int, TimeSpan>();
         var pidCpu = new Dictionary<int, double>();
-        var acc = new Dictionary<string, (int Count, double Cpu, long Mem, bool Locked, int Pid)>(StringComparer.OrdinalIgnoreCase);
+        // Pid is nullable: on macOS kernel_task is PID 0, so 0 cannot mean "unset".
+        var acc = new Dictionary<string, (int Count, double Cpu, long Mem, bool Locked, int? Pid)>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var p in Process.GetProcesses())
         {
@@ -107,8 +109,15 @@ public sealed class ProcessMonitor(ILogger<ProcessMonitor> log, SessionMonitor s
             {
                 try
                 {
+                    // Windows Idle / Unix schedulers use PID 0 with a real name; only macOS needs PID 0 listed (kernel_task).
+                    if (p.Id == 0 && !OperatingSystem.IsMacOS()) continue;
+#if !WINDOWS
+                    var name = MacDisplayName(p);
+#else
                     var name = p.ProcessName;
-                    if (p.Id == 0) continue;
+#endif
+                    if (string.IsNullOrEmpty(name)) continue;
+
                     double cpu = 0;
                     try
                     {
@@ -120,12 +129,17 @@ public sealed class ProcessMonitor(ILogger<ProcessMonitor> log, SessionMonitor s
                     catch { /* protected process: CPU time is not readable */ }
                     pidCpu[p.Id] = cpu;
 
+#if !WINDOWS
+                    var mem = MacMemoryBytes(p);
+#else
                     long mem = 0;
                     try { mem = p.WorkingSet64; } catch { }
+#endif
 
-                    var locked = p.Id == _selfPid || Protected.Contains(name) || !Mine(p);
+                    // PID 0 (macOS kernel_task) and Protected names stay listed but cannot be ended from the phone.
+                    var locked = p.Id == 0 || p.Id == _selfPid || Protected.Contains(name) || !Mine(p);
                     acc.TryGetValue(name, out var a);
-                    acc[name] = (a.Count + 1, a.Cpu + cpu, a.Mem + mem, a.Locked || locked, a.Pid == 0 ? p.Id : a.Pid);
+                    acc[name] = (a.Count + 1, a.Cpu + cpu, a.Mem + mem, a.Locked || locked, a.Pid ?? p.Id);
                 }
                 catch { }
             }
@@ -138,7 +152,7 @@ public sealed class ProcessMonitor(ILogger<ProcessMonitor> log, SessionMonitor s
             {
                 if (!_meta.TryGetValue(kv.Key, out var meta) || meta.Path is null)
                 {
-                    meta = ReadMeta(kv.Value.Pid, kv.Key);
+                    meta = ReadMeta(kv.Value.Pid ?? 0, kv.Key);
                     if (meta.Path is not null) _meta[kv.Key] = meta;
                 }
                 return new ProcGroup(kv.Key, meta.Title, kv.Value.Count, Math.Round(kv.Value.Cpu, 1),
@@ -149,6 +163,61 @@ public sealed class ProcessMonitor(ILogger<ProcessMonitor> log, SessionMonitor s
             .ToList();
     }
 
+    /// <summary>
+    /// Instances of <paramref name="name"/>. On macOS, <see cref="Process.GetProcessesByName"/>
+    /// skips processes whose <see cref="Process.ProcessName"/> is empty (including PID 0 /
+    /// <c>kernel_task</c>); those are matched with the same recovery as <see cref="Sample"/>.
+    /// </summary>
+    private static IEnumerable<Process> ProcessesNamed(string name)
+    {
+        var seen = new HashSet<int>();
+        foreach (var p in Process.GetProcessesByName(name))
+        {
+            seen.Add(p.Id);
+            yield return p;
+        }
+#if !WINDOWS
+        if (!OperatingSystem.IsMacOS()) yield break;
+        foreach (var p in Process.GetProcesses())
+        {
+            if (!seen.Add(p.Id)) { p.Dispose(); continue; }
+            string? recovered = null;
+            try { recovered = MacDisplayName(p); }
+            catch { p.Dispose(); continue; }
+            if (recovered is not null && recovered.Equals(name, StringComparison.OrdinalIgnoreCase))
+                yield return p;
+            else
+                p.Dispose();
+        }
+#endif
+    }
+
+#if !WINDOWS
+    /// <summary>
+    /// macOS display name: <see cref="Process.ProcessName"/>, else <c>ps</c> comm, else
+    /// <c>kernel_task</c> for PID 0.
+    /// </summary>
+    private static string? MacDisplayName(Process p)
+    {
+        var name = p.ProcessName;
+        if (!OperatingSystem.IsMacOS()) return string.IsNullOrEmpty(name) ? null : name;
+        if (string.IsNullOrEmpty(name)) name = UnixProc.Comm(p.Id) ?? "";
+        if (p.Id == 0 && string.IsNullOrEmpty(name)) name = "kernel_task";
+        return string.IsNullOrEmpty(name) ? null : name;
+    }
+
+    /// <summary>Working set, or on macOS ps RSS / kernel wired when WorkingSet64 is 0.</summary>
+    private static long MacMemoryBytes(Process p)
+    {
+        long mem = 0;
+        try { mem = p.WorkingSet64; } catch { }
+        if (mem > 0 || !OperatingSystem.IsMacOS()) return mem;
+        var rss = UnixProc.RssBytes(p.Id);
+        if (rss > 0) return rss;
+        return p.Id == 0 ? UnixProc.KernelWiredBytes() : 0;
+    }
+#endif
+
     /// <summary>Every instance of a process name, with what identifies each one.</summary>
     public ProcDetail Detail(string name)
     {
@@ -158,19 +227,23 @@ public sealed class ProcessMonitor(ILogger<ProcessMonitor> log, SessionMonitor s
             .ToDictionary(g => g.Key, g => g.OrderByDescending(s => s.Since).First().Name);
         var cpu = _pidCpu;
         var list = new List<ProcInstance>();
-        foreach (var p in Process.GetProcessesByName(name))
+        foreach (var p in ProcessesNamed(name))
         {
             using (p)
             {
                 try
                 {
                     long mem = 0;
+#if !WINDOWS
+                    mem = MacMemoryBytes(p);
+#else
                     try { mem = p.WorkingSet64; } catch { }
+#endif
                     long? started = null;
                     try { started = new DateTimeOffset(p.StartTime).ToUnixTimeMilliseconds(); } catch { }
                     string? window = null;
                     try { window = string.IsNullOrWhiteSpace(p.MainWindowTitle) ? null : p.MainWindowTitle; } catch { }
-                    var locked = p.Id == _selfPid || Protected.Contains(name) || !Mine(p);
+                    var locked = p.Id == 0 || p.Id == _selfPid || Protected.Contains(name) || !Mine(p);
                     list.Add(new ProcInstance(p.Id, Math.Round(cpu.GetValueOrDefault(p.Id), 1), Math.Round(mem / 1048576.0),
                         started, claudeByPid.GetValueOrDefault(p.Id), window, _args.GetOrAdd(p.Id, ReadArgs), locked));
                 }
@@ -195,11 +268,18 @@ public sealed class ProcessMonitor(ILogger<ProcessMonitor> log, SessionMonitor s
         if (Protected.Contains(name)) return new(0, 0, $"{name} is protected and cannot be terminated");
 
         int killed = 0, failed = 0;
-        foreach (var p in Process.GetProcessesByName(name))
+        // Same recovered-name match as the process list / Detail, so every listed instance is considered.
+        foreach (var p in ProcessesNamed(name))
         {
             using (p)
             {
-                if (p.Id == _selfPid || !Mine(p)) { failed++; continue; }
+#if !WINDOWS
+                var resolved = MacDisplayName(p) ?? "";
+#else
+                var resolved = p.ProcessName;
+#endif
+                // Check the resolved process name (not the request spelling) so case variants cannot bypass Protected.
+                if (p.Id == 0 || p.Id == _selfPid || Protected.Contains(resolved) || !Mine(p)) { failed++; continue; }
                 try { p.Kill(); killed++; }
                 catch { failed++; }
             }
@@ -216,13 +296,18 @@ public sealed class ProcessMonitor(ILogger<ProcessMonitor> log, SessionMonitor s
     /// </summary>
     public KillResult KillPid(int pid)
     {
+        if (pid == 0) return new(0, 0, "PID 0 is protected and cannot be terminated");
         if (pid == _selfPid) return new(0, 0, "that is the PhoneBox agent itself");
         Process p;
         try { p = Process.GetProcessById(pid); }
         catch { return new(0, 0, "process not found"); }
         using (p)
         {
+#if !WINDOWS
+            var name = MacDisplayName(p) ?? "";
+#else
             var name = p.ProcessName;
+#endif
             if (Protected.Contains(name)) return new(0, 0, $"{name} is protected and cannot be terminated");
             if (!Mine(p)) return new(0, 0, "process belongs to another session or user");
             var descendants = Descendants(pid);
@@ -234,7 +319,12 @@ public sealed class ProcessMonitor(ILogger<ProcessMonitor> log, SessionMonitor s
                 try
                 {
                     using var c = Process.GetProcessById(d);
-                    if (d == _selfPid || Protected.Contains(c.ProcessName) || !Mine(c)) { skipped++; continue; }
+#if !WINDOWS
+                    var childName = MacDisplayName(c) ?? "";
+#else
+                    var childName = c.ProcessName;
+#endif
+                    if (d == _selfPid || Protected.Contains(childName) || !Mine(c)) { skipped++; continue; }
                     c.Kill();
                     killed++;
                 }

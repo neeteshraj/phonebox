@@ -12,7 +12,7 @@ using System.Xml.Linq;
 namespace PhoneBox.Agent;
 
 /// <summary>One headline. <see cref="Link"/> stays on this computer: the phone opens an item by its id.</summary>
-public sealed record FeedItem(string Id, string Title, string Source, long Published, [property: JsonIgnore] string? Link)
+public sealed record FeedItem(string Id, string Title, string Source, long Published, [property: JsonIgnore] string? Link, string Category = "")
 {
     public bool Openable => Link is not null;
 }
@@ -135,7 +135,8 @@ public sealed class FeedMonitor(ConfigStore config, ILogger<FeedMonitor> log) : 
             {
                 if (!_feeds.TryGetValue(src.Url, out var st)) continue;
                 var name = NameOf(src);
-                items.AddRange(st.Items.Select(i => i with { Source = name }));
+                var category = src.Category?.Trim() ?? "";
+                items.AddRange(st.Items.Select(i => i with { Source = name, Category = category }));
                 if (st.Error is { } e) errors.Add($"{name}: {e}");
             }
         // newest first; undated items keep their feed order after the dated ones
@@ -157,15 +158,13 @@ public sealed class FeedMonitor(ConfigStore config, ILogger<FeedMonitor> log) : 
     }
 
     /// <summary>
-    /// Hands the address to the default browser without a shell: explorer.exe on Windows, open(1) on macOS, xdg-open on
-    /// Linux, with the address as one argument. explorer and open pass it on and exit, so one that hangs is ended after
+    /// Hands the address to the default browser without a shell: rundll32 url.dll on Windows, open(1) on macOS, xdg-open on
+    /// Linux, with the address as one argument. rundll32 and open pass it on and exit, so one that hangs is ended after
     /// 15 s; xdg-open can become the browser itself on some desktops, so it is left running.
     /// </summary>
     private static void OpenInBrowser(Uri uri)
     {
-        var psi = new ProcessStartInfo(OperatingSystem.IsWindows() ? "explorer.exe" : OperatingSystem.IsMacOS() ? "/usr/bin/open" : "xdg-open")
-            { UseShellExecute = false, CreateNoWindow = true };
-        psi.ArgumentList.Add(uri.AbsoluteUri);
+        var psi = BrowserStart(uri, OperatingSystem.IsWindows(), OperatingSystem.IsMacOS());
         var p = Process.Start(psi) ?? throw new InvalidOperationException("the browser launcher did not start");
         if (!OperatingSystem.IsWindows() && !OperatingSystem.IsMacOS()) { p.Dispose(); return; }
         _ = Task.Run(async () =>
@@ -177,6 +176,18 @@ public sealed class FeedMonitor(ConfigStore config, ILogger<FeedMonitor> log) : 
                 catch (OperationCanceledException) { try { p.Kill(); } catch { } }
             }
         });
+    }
+
+    /// <summary>The launcher and its arguments for an article address (no side effects; tested).</summary>
+    internal static ProcessStartInfo BrowserStart(Uri uri, bool windows, bool mac)
+    {
+        // explorer.exe opens File Explorer instead of the browser for some addresses (#386, #411); url.dll hands the address
+        // to the http(s) handler and rundll32 exits, like explorer did
+        var psi = new ProcessStartInfo(windows ? Path.Combine(Environment.SystemDirectory, "rundll32.exe") : mac ? "/usr/bin/open" : "xdg-open")
+            { UseShellExecute = false, CreateNoWindow = true };
+        if (windows) psi.ArgumentList.Add("url.dll,FileProtocolHandler");
+        psi.ArgumentList.Add(windows ? FeedParser.LaunchAddress(uri) : uri.AbsoluteUri);
+        return psi;
     }
 
     public override void Dispose()
@@ -399,6 +410,17 @@ internal static partial class FeedParser
     }
 
     /// <summary>Only http and https links are ever opened (no file:, javascript:, custom app schemes).</summary>
+    /// <summary>
+    /// The address as handed to the Windows launcher. .NET leaves '[' and ']' raw after the host (as in a
+    /// <c>#xtor=RSS-3-[lestitres]</c> tracking fragment), and explorer.exe then opens the Documents folder instead of the
+    /// browser, so they are percent-encoded there. An IPv6 host keeps its brackets. macOS and Linux get the address as is.
+    /// </summary>
+    internal static string LaunchAddress(Uri uri)
+    {
+        var authority = uri.GetLeftPart(UriPartial.Authority);
+        return authority + uri.AbsoluteUri[authority.Length..].Replace("[", "%5B").Replace("]", "%5D");
+    }
+
     internal static Uri? SafeLink(string? link) =>
         Uri.TryCreate(link, UriKind.Absolute, out var u) && (u.Scheme == Uri.UriSchemeHttp || u.Scheme == Uri.UriSchemeHttps) && u.AbsoluteUri.Length <= 4096
             ? u : null;

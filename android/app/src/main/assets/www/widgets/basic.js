@@ -1,4 +1,4 @@
-import { bridge, runListeners, sessionRuns, monogramColor, sheetDrag, $, API, D, LEVEL_COLOR, LOCALE, mediaHtml, METRICS, PANEL_HEADERS, PREVIEW, Q_STYLE, S_ORDER, ago, api, averageColor, buildLayout, buzz, cfg, cfgVersion, chart, color, cssVar, currentProcessesSort, emit, fillIcon, fmtClock, fmtDur, fmtHM, fmtMem, fmtReset, fmtTime, fmtValue, gotoProcesses, gpuMem, gpusOf, h, en, haptic, hasProcessesPage, hist, hour12, icon, keyButton, levelOf, media, metricText, online, openSheet, paceInfo, pad, prRow, pushView, quotaProviders, r1, rateStr, registerProcessesSorter, renderStatus, ringSvg, setArtColor, configMark, configReadSince, localWriteStored, setMediaState, setVolDragging, shortDur, shortGpu, store, t, tick, toast, volDragging, wxBlock, wxDeg, wxIcon } from '../main.js';
+import { bridge, runListeners, sessionRuns, monogramColor, sheetDrag, $, API, D, LEVEL_COLOR, LOCALE, mediaHtml, METRICS, PANEL_HEADERS, PREVIEW, Q_STYLE, S_ORDER, ago, api, averageColor, buildLayout, buzz, cfg, cfgVersion, chart, color, cssVar, currentProcessesSort, emit, fillIcon, fmtClock, fmtDur, fmtHM, fmtMem, fmtReset, fmtTime, fmtValue, gotoProcesses, gpuMem, gpusOf, h, en, haptic, hasProcessesPage, hist, hour12, icon, keyButton, levelOf, media, metricText, online, openSheet, paceInfo, pad, prRow, pushView, quotaProviders, r1, rateStr, registerProcessesSorter, renderStatus, ringSvg, setArtColor, configMark, configReadSince, localWriteStored, setMediaState, setVolDragging, shortDur, shortGpu, store, t, tick, toast, volDragging, wxBlock, wxDeg, wxIcon, chime, clockPeriod, setKeyFace, labelled, emo, rich, tp, tpv, quotaText, pages, curPage, gotoPageRef } from '../main.js';
 import { W } from '../registry.js';
 import { dictateInto, stopDictation } from './dictate.js';
 import { lyricsFor, lineAt } from './lyrics.js';
@@ -27,10 +27,11 @@ W.clock = {
   bare: true, needs: ['tick', 'state', 'weather', 'quotas', 'work'],
   create(box, { o }) {
     const status = o.status !== false ? h('div', 'status') : null;
-    const hh = h('span', 'hh', '--'), mm = h('span', 'mm', '--'), ss = h('span', 'sec'), ap = h('span', 'ap');
+    const hh = h('span', 'hh', '--'), colon = h('span', 'colon', ':'), mm = h('span', 'mm', '--'), ss = h('span', 'sec'), ap = h('span', 'ap');
     const date = o.date !== false ? h('div', 'date') : null;
     const wx = o.weather !== false ? wxBlock() : null;
-    box.append(status || '', h('div', 'clock', hh, h('span', 'colon', ':'), mm, ss, ap), date || '', wx || '');
+    box.classList.toggle('clock-centered', o.align === 'center');
+    box.append(status || '', h('div', 'clock', hh, colon, mm, ss, ap), date || '', wx || '');
     box.style.setProperty('--tf', (0.84 - (status ? 0.1 : 0) - (date ? 0.11 : 0) - (wx ? 0.2 : 0)).toFixed(2));
     return {
       // without the weather line the clock must not make the panel fetch the weather
@@ -40,9 +41,12 @@ W.clock = {
           const now = new Date();
           const H = now.getHours(), h12 = hour12();
           hh.textContent = h12 ? String(H % 12 || 12) : pad(H);
-          ap.textContent = h12 ? (H < 12 ? 'AM' : 'PM') : '';
+          ap.textContent = h12 ? clockPeriod(now) : '';
           mm.textContent = pad(now.getMinutes());
           ss.textContent = cfg.display?.showSeconds === false ? '' : pad(now.getSeconds());
+          // the colon blinks once a second from here, not from a CSS animation: a running animation makes the browser draw a frame
+          // on every display refresh (120 a second on some phones) for something that changes once a second
+          colon.classList.toggle('dim', now.getSeconds() % 2 === 1);
           if (date) date.textContent = now.toLocaleDateString(LOCALE, { weekday: 'long', day: 'numeric', month: 'long' });
           if (status && now.getSeconds() % 30 === 0) renderStatus(status, o); // battery
         } else if (kind === 'weather') wx?.update();
@@ -80,6 +84,8 @@ W.forecast = {
         if (daily) {
           const d = w.daily;
           for (let i = 0; i < Math.min(n, d.time.length); i++) {
+            // some models (Météo-France, CMA) forecast fewer than 7 days and send null for the rest: stop there, not at "0°"
+            if (d.temperature_2m_max?.[i] == null) break;
             const day = i === 0 ? t('time.today') : new Date(d.time[i] + 'T12:00').toLocaleDateString(LOCALE, { weekday: 'short' });
             const rain = d.precipitation_probability_max?.[i];
             cells.push(h('div', 'fc-i', h('span', 'fc-t', day), wxEl(wxIcon(d.weather_code[i])),
@@ -93,7 +99,7 @@ W.forecast = {
           const step = n >= 10 ? 1 : 2;
           for (let k = 0; k < n; k++) {
             const i = start + k * step;
-            if (i >= hr.time.length) break;
+            if (i >= hr.time.length || hr.temperature_2m?.[i] == null) break;
             const rain = hr.precipitation_probability?.[i];
             cells.push(h('div', 'fc-i', h('span', 'fc-t', k === 0 ? 'Now' : hr.time[i].slice(11, 13)), wxEl(wxIcon(hr.weather_code[i], hr.is_day?.[i])),
               h('span', 'fc-v', wxDeg(hr.temperature_2m[i]) + '°'), rainEl(rain)));
@@ -242,7 +248,7 @@ function sessionChat(s, panel, { newIn = null } = {}) {
 }
 
 W.media = {
-  needs: ['state', 'fast'],
+  needs: ['state', 'fast', 'media'], // 'media': the agent reads the players every second while this is on screen
   create(box, { o = {} } = {}) {
     box.innerHTML = mediaHtml();
     const q = (s) => box.querySelector(s);
@@ -418,7 +424,7 @@ W.media = {
         box.classList.toggle('idle', !m);
         if (!m) {
           box.classList.remove('playing');
-          q('.m-app-name').textContent = 'Media';
+          q('.m-app-name').textContent = tp('Media');
           sourceIcon.replaceChildren();
           q('.m-title').textContent = t('w.nothingPlaying');
           q('.m-artist').textContent = t('w.pressToResume');
@@ -431,12 +437,12 @@ W.media = {
         findLyrics(m);
         q('.m-app-name').textContent = m.app || 'Media';
         sourceIcon.innerHTML = sourceIcons[m.app] || '';
-        q('.m-title').textContent = m.title || 'Unknown track';
+        q('.m-title').textContent = m.title || tp('Unknown track');
         q('.m-artist').textContent = [m.artist, m.album].filter(Boolean).join(' · ') || '—';
         if (m.app === 'Internet Radio' && !(m.durMs > 0)) {
           q('.fill').style.width = m.playing ? '100%' : '0';
           q('.m-pos').textContent = fmtTime(m.posMs || 0);
-          q('.m-dur').textContent = m.playing ? 'LIVE' : '0:00';
+          q('.m-dur').textContent = m.playing ? tp('LIVE') : '0:00';
         } else {
           q('.m-dur').textContent = fmtTime(m.durMs);
         }
@@ -447,7 +453,7 @@ W.media = {
           else { img.classList.remove('on'); setArtColor(null); box.style.removeProperty('--art'); }
         }
       },
-      destroy: cancelVolumeDrag,
+      destroy() { cancelVolumeDrag(); },
     };
     return self;
   },
@@ -493,7 +499,7 @@ W.gauge = {
     const m = METRICS[o.metric] || METRICS.cpu;
     box.style.setProperty('--q', color(m.color));
     const dial = h('div', 'g-dial'), pct = h('div', 'g-val'), sub = h('div', 'g-sub');
-    box.append(dial, h('div', 'g-label', m.label), sub);
+    box.append(dial, h('div', 'g-label', tp(m.label)), sub);
     dial.append(pct);
     if (o.metric === 'cpu' || o.metric === 'ram') bindProcessLink(box, o.metric === 'cpu' ? 'cpu' : 'mem');
     let svg = null;
@@ -510,7 +516,7 @@ W.gauge = {
         svg = dial.firstElementChild;
         const [v, u] = metricText(m, s);
         pct.replaceChildren(v, h('small', null, u));
-        sub.textContent = m.sub?.(s) || '';
+        sub.replaceChildren(h('bdi', null, m.sub?.(s) || ''));
       },
     };
   },
@@ -524,7 +530,7 @@ W.chart = {
     if (!keys.length) keys.push('cpu');
     const single = keys.length === 1 ? METRICS[keys[0]] : null;
     const isNet = keys.every((k) => k === 'down' || k === 'up');
-    const label = single ? single.name : isNet ? 'Network' : keys.map((k) => METRICS[k].name).join(' · ');
+    const label = single ? tp(single.name) : isNet ? tp('Network') : keys.map((k) => tp(METRICS[k].name)).join(' · ');
     box.style.setProperty('--c', color((single || METRICS[keys[0]]).color));
     const head = h('div', 's-head', h('span', 's-label', label), h('span', 's-name', ''));
     const main = h('div', 's-main');
@@ -562,7 +568,7 @@ W.chart = {
             e.style.setProperty('--k', color(mm.color));
             return e;
           }));
-          head.lastChild.textContent = isNet && s.ping ? `Ping ${s.ping.ms != null ? Math.round(s.ping.ms) + ' ms' : '—'} · loss ${s.ping.lossPct}%` : '';
+          head.lastChild.textContent = isNet && s.ping ? tpv('Ping {ms} · loss {loss}%', { ms: s.ping.ms != null ? Math.round(s.ping.ms) + ' ms' : '—', loss: s.ping.lossPct }) : '';
         }
         const max0 = METRICS[keys[0]].max(s), m0 = METRICS[keys[0]];
         chart(canvas, keys.map((k) => ({ data: hist[METRICS[k].hist || k], color: color(METRICS[k].color), max: METRICS[k].max(s) })),
@@ -631,7 +637,7 @@ W.quotas = {
    */
   create(box, { o }) {
     const tokens = (n) => n == null ? '—' : n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : String(n);
-    const grid = h('div', 'q-grid', h('div', 'empty', 'Quota data arrives once the computer is connected.'));
+    const grid = h('div', 'q-grid', h('div', 'empty', tp('Quota data arrives once the computer is connected.')));
     box.append(grid);
     let last = 0;
     let offset = 0;
@@ -663,7 +669,7 @@ W.quotas = {
     const getProviders = () => {
       if (Array.isArray(o.providers)) return o.providers;
       if (Array.isArray(cfg.codexBar?.providers)) return cfg.codexBar.providers;
-      return ['claude', 'codex', 'antigravity'];
+      return ['claude', 'codex', 'antigravity', 'grok'];
     };
 
     const isOverviewEnabled = () => o.showOverview === true;
@@ -692,14 +698,14 @@ W.quotas = {
       const age = ov.updatedAt ? Math.max(0, Date.now() - ov.updatedAt) : null;
       const updStr = age != null ? `checked ${age < 60_000 ? 'just now' : fmtDur(age) + ' ago'}` : '';
       card.appendChild(h('div', 'q-head',
-        h('span', 'q-logo', '📊'),
-        h('span', 'q-name', 'Overview'),
+        h('span', 'q-logo', emo('📊')),
+        h('span', 'q-name', tp('Overview')),
         h('span', 'q-plan', `${days}-day spend`),
         updStr ? h('span', 'q-upd', updStr) : null
       ));
       const summary = h('div', 'q-ov-hero',
-        h('div', 'q-ov-stat', h('span', 'q-ov-lbl', 'Estimated spend'), h('strong', 'q-ov-val', fmtCurrency(ov.totalCost, ov.currencyCode))),
-        h('div', 'q-ov-stat', h('span', 'q-ov-lbl', 'Recorded tokens'), h('strong', 'q-ov-val', tokens(ov.totalTokens || 0)))
+        h('div', 'q-ov-stat', h('span', 'q-ov-lbl', tp('Estimated spend')), h('strong', 'q-ov-val', fmtCurrency(ov.totalCost, ov.currencyCode))),
+        h('div', 'q-ov-stat', h('span', 'q-ov-lbl', tp('Recorded tokens')), h('strong', 'q-ov-val', tokens(ov.totalTokens || 0)))
       );
       card.appendChild(summary);
       const details = h('div', 'q-details q-ov-details');
@@ -726,7 +732,7 @@ W.quotas = {
       const want = getProviders();
       const list = getItems();
       grid.replaceChildren();
-      if (!list.length) { grid.appendChild(h('div', 'empty', want.length ? 'Quota data is unavailable for the selected providers' : 'No quota providers enabled')); return; }
+      if (!list.length) { grid.appendChild(h('div', 'empty', want.length ? tp('Quota data is unavailable for the selected providers') : tp('No quota providers enabled'))); return; }
 
       const ps = getPageSize();
       const needsPaging = isRotateEnabled() && ps > 0 && list.length > ps;
@@ -771,21 +777,21 @@ W.quotas = {
           const pctEl = h('div', 'q-pct', String(Math.round(l.percent)), h('small', null, '%'));
           if (compact) pctEl.style.fontSize = 'calc(22px * var(--widget-font-scale, 1))';
           dial.appendChild(pctEl);
-          rings.appendChild(h('div', 'q-ring', dial, h('div', 'q-label', l.label), p.id === 'codex' ? h('div', 'q-left', `${Math.max(0, Math.round(100 - l.percent))}% left`) : null, h('div', 'q-reset', ...String(fmtReset(l.resetsAt) || '').split(' · ').map((x) => h('span', null, x))),
+          rings.appendChild(h('div', 'q-ring', dial, h('div', 'q-label', quotaText(l.label)), p.id === 'codex' ? h('div', 'q-left', tpv('{n}% left', { n: Math.max(0, Math.round(100 - l.percent)) })) : null, h('div', 'q-reset', fmtReset(l.resetsAt)),
             pace ? h('div', 'q-pace ' + pace.cls, pace.text) : null));
         }
-        if (!p.limits.length) rings.appendChild(h('div', 'q-reset', 'No data'));
+        if (!p.limits.length) rings.appendChild(h('div', 'q-reset', tp('No data')));
         card.append(rings);
         if (p.id === 'codex' && p.codex) {
           const c = p.codex;
           const details = h('div', 'q-details');
-          if (c.model) details.append(h('div', 'q-detail', h('span', null, 'Latest local session'), h('strong', null, c.model + (c.effort ? ` · ${c.effort}` : ''))));
-          if (c.totalTokens != null) details.append(h('div', 'q-detail', h('span', null, 'Session tokens'), h('strong', null, tokens(c.totalTokens))));
-          if (c.totalInput != null || c.totalOutput != null) details.append(h('div', 'q-detail q-breakdown', `In ${tokens(c.totalInput)} · Out ${tokens(c.totalOutput)} · Cached ${tokens(c.totalCached)} · Reasoning ${tokens(c.totalReasoning)}`));
-          if (c.lastInput != null && c.contextWindow) details.append(h('div', 'q-detail q-breakdown', `Last input ${tokens(c.lastInput)} / ${tokens(c.contextWindow)} context window`));
+          if (c.model) details.append(h('div', 'q-detail', h('span', null, tp('Latest local session')), h('strong', null, c.model + (c.effort ? ` · ${c.effort}` : ''))));
+          if (c.totalTokens != null) details.append(h('div', 'q-detail', h('span', null, tp('Session tokens')), h('strong', null, tokens(c.totalTokens))));
+          if (c.totalInput != null || c.totalOutput != null) details.append(h('div', 'q-detail q-breakdown', tpv('In {in} · Out {out} · Cached {cached} · Reasoning {reasoning}', { in: tokens(c.totalInput), out: tokens(c.totalOutput), cached: tokens(c.totalCached), reasoning: tokens(c.totalReasoning) })));
+          if (c.lastInput != null && c.contextWindow) details.append(h('div', 'q-detail q-breakdown', tpv('Last input {n} / {max} context window', { n: tokens(c.lastInput), max: tokens(c.contextWindow) })));
           if (details.childNodes.length) card.append(details);
         }
-        card.append(h('div', 'q-foot', h('span', p.extra?.startsWith('Limit reached') ? 'q-alert' : null, p.extra || ''), p.error ? h('span', 'q-err', p.error) : h('span')));
+        card.append(h('div', 'q-foot', h('span', p.extra?.startsWith('Limit reached') ? 'q-alert' : null, quotaText(p.extra) || ''), p.error ? h('span', 'q-err', p.error) : h('span')));
 
         grid.appendChild(card);
       }
@@ -877,7 +883,7 @@ W.sessions = {
       try { const u = await api('/usage'); usage = new Map((u?.sessions || []).map((x) => ['claude:' + x.id, x])); draw(); } catch (_) {}
     };
     const short = (n) => n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'k' : String(n);
-    const TOOL = { claude: 'Claude Code', codex: 'Codex', cursor: 'Cursor' };
+    const TOOL = { claude: 'Claude Code', codex: 'Codex', cursor: 'Cursor', grok: 'Grok', opencode: 'OpenCode', antigravity: 'Antigravity' };
     const RECENT = 10 * 60_000; // a session that finished this recently still counts as active
     const active = (s) => s.status !== 'idle' || Date.now() - s.since < RECENT;
     const modelName = (m) => {
@@ -885,12 +891,88 @@ W.sessions = {
       return x ? x[1][0].toUpperCase() + x[1].slice(1) + ' ' + x[2] + '.' + x[3] : m || '';
     };
     const tokens = (n) => n == null ? '—' : n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : String(n);
-    const statusText = (s) => s.status === 'busy' ? t('sess.working') : s.status === 'waiting' ? t('sess.waiting') : s.status === 'shell' ? t('sess.shell') : s.outcome === 'completed' ? t('sess.completed') : s.outcome === 'aborted' ? t('sess.aborted') : t('sess.idle');
+    const statusText = (s) => s.status === 'busy' ? t('sess.working') : s.status === 'waiting' ? t('sess.waiting') : s.status === 'shell' ? t('sess.shell') : s.outcome === 'completed' ? t('sess.completed') : s.outcome === 'failed' ? t('sess.failed') : s.outcome === 'aborted' ? t('sess.aborted') : t('sess.idle');
+    // The tool each session comes from: one glyph in the list, a glyph and a name in the details panel.
+    const toolIcon = (tool) => tool === 'claude' ? '✳' : tool === 'codex' ? '◎' : tool === 'cursor' ? '◆' : tool === 'opencode' ? '◈' : tool === 'antigravity' ? Q_STYLE.antigravity.logo : tool === 'grok' ? Q_STYLE.grok.logo : '◎';
+    const toolTitle = (tool) => tool === 'claude' ? 'Claude Code' : tool === 'codex' ? 'Codex' : tool === 'cursor' ? 'Cursor' : tool === 'opencode' ? 'OpenCode' : tool === 'antigravity' ? 'Antigravity' : tool === 'grok' ? 'Grok' : 'Codex';
     const ageText = (since) => Date.now() - since < 60_000 ? 'just now' : shortDur(Date.now() - since) + ' ago';
-    // A Claude Code chat's title (the agent sends it only when Settings › Claude Code › "Show session titles on the phone"
-    // is on) is the main label and the folder goes under it; without a title the folder is the label, as before.
+    // A session's title is the main label and the project folder goes under it: Claude Code sends it only while
+    // Settings › Claude Code › "Show session titles on the phone" is on, OpenCode only while "Show OpenCode session
+    // titles" is on, and Antigravity only while "Show Antigravity chat titles on the phone" is on; without a title
+    // the folder is the label, as before.
     const titleOf = (s) => s.title || s.project || s.name;
     const folderOf = (s) => (s.title ? s.project : '');
+    // A Claude Code chat's recent steps, last exchange and message list. The agent sends them only when Settings › Claude Code
+    // › "Show the conversation on the phone" is on. Returns the function that stops the refresh.
+    const conversationSection = (panel, s) => {
+      const box = h('div', 'session-conv');
+      panel.append(box);
+      let data = null, expanded = false, gone = false, asked = 0, applied = 0;
+      let labels = []; // the time label of each step on screen, so they can move on without drawing everything again
+      const stepAge = (st) => (st.running ? (st.at ? 'running ' + shortDur(Date.now() - st.at) : 'running') : st.at ? ageText(st.at) : '');
+      const refreshLabels = () => { for (const [el, st] of labels) el.textContent = stepAge(st); };
+      const toolName = (n) => n.startsWith('mcp__') ? n.slice(5).replace(/__/g, ' › ') : n;
+      const clip = (text, n) => text.length > n ? text.slice(0, n) + '…' : text;
+      const message = (m, full) => h('div', 'conv-msg ' + m.role,
+        h('span', 'conv-who', m.role === 'user' ? tp('You') : 'Claude'),
+        h('div', full ? 'conv-text' : 'conv-text clamp', full ? m.text : clip(m.text, 500)));
+      const render = () => {
+        const prevList = box.querySelector('.conv-list');
+        // a list read to its end follows the chat as new messages come in; one scrolled back stays where it is (#460)
+        const atEnd = !prevList || prevList.scrollHeight - prevList.scrollTop - prevList.clientHeight < 24;
+        const top = prevList && !atEnd ? prevList.scrollTop : null;
+        labels = [];
+        if (!data.enabled) {
+          box.replaceChildren(h('p', 'session-note', tp('The conversation is off. Turn it on in Settings › Claude Code › Show the conversation on the phone.')));
+          return;
+        }
+        const messages = data.messages || [], steps = data.steps || [];
+        const kids = [];
+        if (steps.length) {
+          kids.push(h('div', 'conv-h', tp('Recent steps')));
+          for (const st of [...steps].reverse().slice(0, 6)) {
+            const age = h('span', 'cs-a', stepAge(st));
+            labels.push([age, st]);
+            kids.push(h('div', 'conv-step' + (st.running ? ' on' : ''), h('span', 'cs-t', toolName(st.tool)), h('span', 'cs-d', st.detail || ''), age));
+          }
+        }
+        if (!messages.length) kids.push(h('p', 'session-note', tp('No messages yet.')));
+        else if (expanded) {
+          kids.push(h('div', 'conv-h', tp('Conversation')), h('div', 'conv-list', messages.map((m) => message(m, true))));
+        } else {
+          const lastOf = (role) => [...messages].reverse().find((m) => m.role === role);
+          kids.push(h('div', 'conv-h', tp('Last exchange')));
+          for (const m of [lastOf('user'), lastOf('assistant')]) if (m) kids.push(message(m, false));
+        }
+        if (messages.length) {
+          const toggle = h('button', 'conv-toggle', expanded ? 'Hide the conversation' : `Show the conversation (${messages.length})`);
+          toggle.type = 'button';
+          toggle.addEventListener('click', () => { haptic(); expanded = !expanded; render(); });
+          kids.push(toggle);
+        }
+        box.replaceChildren(...kids);
+        const list = box.querySelector('.conv-list');
+        if (list) list.scrollTop = top ?? list.scrollHeight; // a new view starts at the newest message, and keeps up with it
+      };
+      const load = async () => {
+        const mine = ++asked;
+        try {
+          const d = await api('/work/conversation?id=' + encodeURIComponent(s.id), 'GET', 5000);
+          // A slower earlier request can finish after a newer one: its answer is older, and must not replace it (for
+          // example a "turned off" answer that has already been shown).
+          if (gone || mine < applied) return;
+          applied = mine;
+          // the messages are drawn again only when they changed, to keep the scroll position and the focus; the ages
+          // of the steps move on with the clock either way
+          if (JSON.stringify(d) !== JSON.stringify(data)) { data = d; render(); } else refreshLabels();
+        } catch (_) {
+          if (!gone && !data) box.replaceChildren(h('p', 'session-note', tp('Could not read the conversation.')));
+        }
+      };
+      load();
+      const timer = setInterval(load, 3000);
+      return () => { gone = true; clearInterval(timer); };
+    };
     const openDetails = (s) => {
       haptic();
       const backdrop = h('div', 'session-backdrop');
@@ -899,12 +981,13 @@ W.sessions = {
       panel.setAttribute('aria-modal', 'true');
       const title = h('h2', null, titleOf(s));
       const close = h('button', 'session-close', icon('x'));
-      close.setAttribute('aria-label', 'Close session details');
+      close.setAttribute('aria-label', tp('Close session details'));
+      let stopConversation = () => {};
       const onKey = (e) => { if (e.key === 'Escape') dismiss(); };
       const dismiss = () => { backdrop.remove(); document.removeEventListener('keydown', onKey); panel._cleanup?.(); };
       close.addEventListener('click', dismiss);
       backdrop.addEventListener('click', (e) => { if (e.target === backdrop) dismiss(); });
-      panel.append(h('div', 'session-panel-head', h('span', null, s.tool === 'codex' ? '◎ Codex' : s.tool === 'cursor' ? '◆ Cursor' : '✳ Claude Code'), close), title);
+      panel.append(h('div', 'session-panel-head', h('span', null, toolIcon(s.tool) + ' ' + toolTitle(s.tool)), close), title);
       const rows = [
         ['Folder', folderOf(s) || null],
         ['Status', statusText(s)],
@@ -924,7 +1007,7 @@ W.sessions = {
       const facts = h('details', 'session-facts', h('summary', null, [statusText(s), s.model].filter(Boolean).join(' · ') || 'Details'),
         h('div', 'session-grid', rows.filter(([, value]) => value != null)
           .map(([label, value]) => h('div', 'session-cell', h('span', null, label), h('strong', null, value)))));
-      if (s.tool === 'codex') facts.append(h('p', 'session-note', 'Token totals are for this local session, not your account allowance.'));
+      if (s.tool === 'codex' || s.tool === 'grok' || (s.tool === 'antigravity' && s.totalTokens != null)) facts.append(h('p', 'session-note', tp('Token totals are for this local session, not your account allowance.')));
       panel.append(facts);
       panel.classList.add('has-chat');
       panel.append(...sessionChat(s, panel));
@@ -947,7 +1030,7 @@ W.sessions = {
         : [folderOf(s), model, tok != null ? short(tok) : '', u?.context ? short(u.context) + ' ctx' : ''].filter(Boolean);
       const [label, when] = stateOf(s);
       const row = h('button', 'sess ai-card ' + s.status + (active(s) ? '' : ' old'),
-        h('span', 'tl ' + s.tool, s.tool === 'claude' ? '✳' : s.tool === 'cursor' ? '◆' : '◎', h('i', 'tl-st')),
+        h('span', 'tl ' + s.tool, toolIcon(s.tool), h('i', 'tl-st')),
         h('span', 'sess-main',
           h('span', 'ai-top', h('span', 'nm', titleOf(s)), h('span', 'ai-pill', label)),
           h('span', 'ai-bot', h('span', 'sess-meta', facts.join(' · ') || TOOL[s.tool] || s.tool), h('small', 'ai-when', when))),
@@ -991,10 +1074,10 @@ W.github = {
   create(box) {
     box.style.setProperty('--c', '#c9d1d9');
     const user = h('span', 'w-sum'), bell = h('span', 'gh-bell');
-    const rc = h('b'), mc = h('b'), rev = h('div', 'gh-list'), mine = h('div', 'gh-list'), err = h('div', 'gh-err', 'Waiting for GitHub data…');
+    const rc = h('b'), mc = h('b'), rev = h('div', 'gh-list'), mine = h('div', 'gh-list'), err = h('div', 'gh-err', tp('Waiting for GitHub data…'));
     box.append(h('div', 'w-head', h('span', 's-label', 'GitHub'), user, bell),
-      h('div', 'gh-sec', h('span', null, 'Review requests'), rc), rev,
-      h('div', 'gh-sec', h('span', null, 'My pull requests'), mc), mine, err);
+      h('div', 'gh-sec', h('span', null, tp('Review requests')), rc), rev,
+      h('div', 'gh-sec', h('span', null, tp('My pull requests')), mc), mine, err);
     return {
       update() {
         const g = D.work?.github;
@@ -1120,6 +1203,22 @@ W.processes = {
 export function applyToggles(root) {
   const t = D.state?.toggles || {};
   root.querySelectorAll('.key.toggle').forEach((b) => b.classList.toggle('on', t[b.dataset.id] === true));
+  applyCycles(root);
+}
+
+// A key that cycles through other keys shows the one that ran last (D.state.cycles: { id: the id of that key }); before the
+// first tap, and after the agent restarted, it shows its own icon and name. The agent sends the id, not a position, so
+// the face never depends on which version of the list the phone has loaded.
+function applyCycles(root) {
+  const at = D.state?.cycles || {}, all = cfg.shortcuts || [];
+  root.querySelectorAll('.key.cycle').forEach((b) => {
+    const id = b.dataset.id, own = all.find((x) => x.id === id);
+    if (!own) return;
+    const want = at[id] != null ? all.find((x) => x.id === at[id]) : (b.dataset.face ? own : null);
+    // a key the phone has not loaded yet leaves the face as it is: not the key's own, which did not run
+    if (!want || (b.dataset.face || '') === (want.id === id ? '' : want.id)) return;
+    setKeyFace(b, want, b._cover === true);
+  });
 }
 
 const ACTION_STATE = { 'monitor-off': 'Turn the display off', monitoroff: 'Turn the display off', screenoff: 'Turn the display off', lock: 'Lock the Mac', sleep: 'Put the Mac to sleep' };
@@ -1138,9 +1237,14 @@ function launcher(box, list, o) {
     b.classList.add('ln-app');
     b.append(h('i', 'ln-dot'));
     if (s.bundle) {
-      const img = new Image();
+      // in the page before its address is set, as the Mac card's icons: the demo swaps it for a made-up icon
+      const img = document.createElement('img');
       img.alt = '';
-      img.onload = () => { const ic = b.querySelector('.k-icon'); ic.replaceChildren(img); ic.classList.add('k-icon-img', 'ln-real'); };
+      img.hidden = true;
+      const ic = b.querySelector('.k-icon');
+      ic.append(img);
+      img.onload = () => { img.hidden = false; ic.replaceChildren(img); ic.classList.add('k-icon-img', 'ln-real'); };
+      img.onerror = () => img.remove();
       img.src = `${API}/system/apps/icon?bundle=${encodeURIComponent(s.bundle)}`;
     }
     return b;
@@ -1282,7 +1386,9 @@ W.calendar = {
         const y = now.getFullYear(), m = now.getMonth();
         const first = new Date(y, m, 1), days = new Date(y, m + 1, 0).getDate();
         const lead = (first.getDay() + 6) % 7; // Monday first
-        const cells = ['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((d, i) => h('span', 'cal-h' + (i > 4 ? ' we' : ''), d));
+        const weekday = new Intl.DateTimeFormat(LOCALE, { weekday: 'narrow' });
+        const cells = Array.from({ length: 7 }, (_, i) =>
+          h('span', 'cal-h' + (i > 4 ? ' we' : ''), weekday.format(new Date(2024, 0, i + 1)))); // Monday, Jan 1
         const prevDays = new Date(y, m, 0).getDate();
         for (let i = 0; i < lead; i++) cells.push(h('span', 'cal-d out', prevDays - lead + 1 + i));
         for (let d = 1; d <= days; d++) {
@@ -1294,7 +1400,7 @@ W.calendar = {
         const grid = h('div', 'cal', cells);
         grid.style.gridTemplateRows = `auto repeat(${total / 7 - 1}, 1fr)`;
         box.replaceChildren(h('div', 'w-title', now.toLocaleDateString(LOCALE, { month: 'long', year: 'numeric' }),
-          h('span', 'w-sub', 'Week ' + isoWeek(now))), grid);
+          h('span', 'w-sub', tp('Week ') + isoWeek(now))), grid);
       },
     };
   },
@@ -1364,7 +1470,7 @@ W.pomodoro = {
     const save = () => { st.phase = plan[st.step].kind; store.set(key, st); };
     save();
     const dial = h('div', 'g-dial'), time = h('div', 'g-val'), phase = h('div', 'g-label'), count = h('div', 'g-sub');
-    const play = h('button', 'pb main', '▶'), reset = h('button', 'pb', '↺'), skip = h('button', 'pb', '⏭');
+    const play = labelled(h('button', 'pb main', icon('play')), t('w.a.start')), reset = labelled(h('button', 'pb', icon('rotate-ccw')), t('w.a.restart')), skip = labelled(h('button', 'pb', icon('skip-forward')), t('w.a.skip'));
     dial.append(time);
     box.append(dial, phase, count, h('div', 'pomo-btns', reset, play, skip));
     let svg = null;
@@ -1397,10 +1503,11 @@ W.pomodoro = {
         const was = plan[st.step].kind;
         const finished = advance(false);
         buzz(finished ? '0,200,120,200,120,200,120,600' : '0,200,120,200,120,400');
+        if (o.sound === true) chime(o.soundVolume, finished);
         const next = plan[st.step].kind;
         toast(finished ? 'Sequence finished, well done'
           : next === 'long' ? 'Time for a long break' : next === 'break' ? 'Time for a break'
-            : was === 'focus' ? 'Next focus session' : 'Back to focus', 'ok', '🍅 Pomodoro', 5);
+            : was === 'focus' ? tp('Next focus session') : tp('Back to focus'), 'ok', '🍅 Pomodoro', 5);
       }
       const left = remaining();
       const kind = plan[st.step].kind;
@@ -1413,9 +1520,12 @@ W.pomodoro = {
       time.textContent = fmtTime(left + 999);
       phase.textContent = label();
       const tomatoes = st.count ? '🍅'.repeat(Math.min(st.count, 6)) + (st.count > 6 ? ` ×${st.count}` : '') : t('w.noSessionsToday');
-      count.textContent = custom.bad ? `Sequence not understood: "${custom.bad}"`
-        : rounds > 1 ? `Round ${(st.round || 0) + 1}/${rounds} · ${tomatoes}` : tomatoes;
-      play.textContent = st.endsAt ? '⏸' : '▶';
+      count.replaceChildren(rich(custom.bad ? `Sequence not understood: "${custom.bad}"`
+        : rounds > 1 ? `Round ${(st.round || 0) + 1}/${rounds} · ${tomatoes}` : tomatoes));
+      // the tomato icons are decorative (aria-hidden), so say the count in words for screen readers
+      if (st.count && !custom.bad) count.append(h('span', 'sr-only', ' ' + t('w.a.sessionsToday', { n: st.count })));
+      play.replaceChildren(icon(st.endsAt ? 'pause' : 'play'));
+      labelled(play, t(st.endsAt ? 'w.a.pause' : 'w.a.start'));
     };
     play.addEventListener('click', () => {
       haptic();
@@ -1454,7 +1564,7 @@ W.countdown = {
       }
     }
     const big = h('div', 'cd-v'), sub = h('div', 'cd-s');
-    box.append(h('div', 'cd-l', o.label || 'Countdown'), big, sub);
+    box.append(h('div', 'cd-l', o.label || tp('Countdown')), big, sub);
     if (Number.isNaN(target)) { big.textContent = '—'; sub.textContent = t('w.setDateFormat'); return {}; }
     sub.textContent = new Date(target).toLocaleDateString(LOCALE, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }) + ', ' + fmtHM(new Date(target));
     return {
@@ -1558,6 +1668,55 @@ W.note = {
   },
 };
 
+// Page buttons: one button per page (the ticked ones, or all), the page you are on highlighted. A tap goes there the
+// same way a rule or a webhook does.
+W.pagebuttons = {
+  bare: true, needs: ['tick'],
+  create(box, { o }) {
+    const list = h('div', 'pgb');
+    if (o.title) box.append(h('div', 'w-title', o.title));
+    box.append(list);
+    let shown = '';
+    const render = () => {
+      const ids = Array.isArray(o.ids) ? o.ids : [];
+      let items = pages.map((p, i) => ({ p, i })).filter(({ p }) => !ids.length || ids.includes(p.id));
+      if (!items.length) items = pages.map((p, i) => ({ p, i })); // the ticked pages are gone: show them all
+      const key = items.map(({ p, i }) => `${i}:${p.id}:${p.icon || ''}:${p.title}`).join('|');
+      if (key !== shown) {
+        shown = key;
+        list.replaceChildren(...items.map(({ p, i }) => {
+          const b = h('button', 'pgb-b', p.icon ? h('span', 'pgb-i', rich(p.icon)) : null, h('span', 'pgb-t', p.title || `${i + 1}`));
+          b.type = 'button';
+          b.dataset.i = i;
+          b.setAttribute('aria-label', `${i + 1} · ${p.title || ''}`);
+          b.onclick = (e) => { e.stopPropagation(); haptic(); gotoPageRef(i + 1); };
+          return b;
+        }));
+      }
+      list.querySelectorAll('.pgb-b').forEach((b) => b.classList.toggle('on', +b.dataset.i === curPage));
+      fit();
+    };
+    // columns for the widget's shape: buttons about twice as wide as tall, with few empty cells
+    let fitted = '';
+    const fit = () => {
+      const n = list.children.length, W = list.clientWidth, H = list.clientHeight;
+      if (!n || !W || !H) return;
+      let best = 1, score = Infinity;
+      for (let cols = 1; cols <= n; cols++) {
+        const rows = Math.ceil(n / cols);
+        const s = Math.abs(Math.log((W / cols) / (H / rows) / 2)) + 0.15 * (cols * rows - n);
+        if (s < score) { score = s; best = cols; }
+      }
+      const value = `repeat(${best}, minmax(0, 1fr))`;
+      if (value !== fitted) { fitted = value; list.style.gridTemplateColumns = value; }
+    };
+    const watch = typeof ResizeObserver === 'function' ? new ResizeObserver(fit) : null;
+    watch?.observe(list);
+    render();
+    return { update: render, destroy() { watch?.disconnect(); } };
+  },
+};
+
 W.label = {
   bare: true, needs: [],
   create(box, { o }) {
@@ -1620,7 +1779,7 @@ W.push = {
       if (c) box.style.setProperty('--c', c); else box.style.removeProperty('--c');
       const unit = v.unit ?? o.unit ?? '';
       const style = o.style && o.style !== 'auto' ? o.style : v.items ? 'list' : 'big';
-      const title = h('div', 'w-title', (v.icon ? v.icon + ' ' : '') + (o.title || v.title || key), h('span', 'push-age w-sub', ago(item.at)));
+      const title = h('div', 'w-title', v.icon ? rich(v.icon + ' ') : '', o.title || v.title || key, h('span', 'push-age w-sub', ago(item.at)));
       let body;
       if (style === 'list') {
         const items = v.items || (v.value != null ? [v.value] : []);
@@ -1660,7 +1819,7 @@ W.inbox = {
   needs: ['notes', 'tick'],
   create(box) {
     const list = h('div', 'inbox');
-    const clear = h('button', 'mini-btn', 'Clear');
+    const clear = h('button', 'mini-btn', tp('Clear'));
     clear.addEventListener('click', () => { haptic(); D.notes = []; store.set('notes', []); emit('notes'); });
     box.append(h('div', 'w-title', en('Notifications'), clear), list);
     let shown = '';
@@ -1765,7 +1924,7 @@ W.usage = {
 // Spotify-style lyrics for what the computer is playing (YouTube, Spotify, Music …): the line being sung lit up and
 // kept in view, past lines dimmed, a tap on a line seeks the song there. From lrclib.net, looked up by the phone.
 W.lyrics = {
-  needs: ['state', 'fast'],
+  needs: ['state', 'fast', 'media'], // 'media': fresh Now Playing readings while it is on screen
   create(box, { o }) {
     box.classList.add('ly');
     const art = document.createElement('img'); art.className = 'ly-art'; art.alt = '';

@@ -46,6 +46,62 @@ public sealed class CodexBarTests
     }
 
     [Fact]
+    public void MergeKeepsLastGoodLimitsWhenCodexBarReportsNoSession()
+    {
+        var good = Assert.Single(CodexBar.Parse("""
+            [{"provider":"cursor","usage":{"loginMethod":"Pro","primary":{"usedPercent":42,"windowMinutes":10080},"updatedAt":"2026-01-01T00:00:00Z"}}]
+            """));
+        Assert.Null(good.Error);
+        Assert.NotEmpty(good.Limits);
+        var failed = Assert.Single(CodexBar.Parse("""[{"provider":"cursor","error":{"message":"No Cursor session found."}}]"""));
+        var now = good.UpdatedAt ?? 1;
+        var merged = Assert.Single(CodexBar.Merge([good], [failed], now));
+        Assert.Null(merged.Error);
+        Assert.Equal(42, merged.Limits[0].Percent);
+        // Still shown for Cursor (no local reader) within the hold window — must stay error-free (not the stale fallback).
+        var held = CodexBar.Select(null, merged, now + CodexBar.FreshExternalMs + 1);
+        Assert.NotNull(held);
+        Assert.Null(held.Error);
+        Assert.Equal(42, held.Limits[0].Percent);
+
+        // A prior reading that already had an error is not promoted to healthy.
+        var tainted = good with { Error = "No Cursor session found." };
+        var afterTainted = Assert.Single(CodexBar.Merge([tainted], [failed], now));
+        Assert.NotNull(afterTainted.Error);
+    }
+
+    [Fact]
+    public void HeldReadingDropsExpiredSessionLimitButKeepsWeekly()
+    {
+        const long now = 10_000_000L;
+        var prior = new QuotaProvider("cursor", "Cursor", "Pro",
+        [
+            new("5-hour session", 80, now - 1, 300 * 60, "warning"),
+            new("Weekly", 42, now + 7 * 24 * 3600_000L, 10080 * 60, "normal"),
+        ], null, now - CodexBar.FreshExternalMs - 1, null, Source: "codexbar");
+        var failed = Assert.Single(CodexBar.Parse("""[{"provider":"cursor","error":{"message":"No Cursor session found."}}]"""));
+
+        var merged = Assert.Single(CodexBar.Merge([prior], [failed], now));
+        var weekly = Assert.Single(merged.Limits);
+        Assert.Equal("Weekly", weekly.Label);
+        Assert.Equal(42, weekly.Percent);
+        Assert.Null(merged.Error);
+
+        var selected = CodexBar.Select(null, merged, now);
+        Assert.NotNull(selected);
+        Assert.Null(selected.Error);
+        Assert.Equal(42, Assert.Single(selected.Limits).Percent);
+
+        // When every window has already reset, there is nothing left to hold.
+        var allExpired = prior with
+        {
+            Limits = [new("5-hour session", 80, now - 1, 300 * 60, "warning")],
+        };
+        Assert.Null(CodexBar.HeldReading(allExpired, now));
+        Assert.NotNull(Assert.Single(CodexBar.Merge([allExpired], [failed], now)).Error);
+    }
+
+    [Fact]
     public void InvalidRootIsAnError() => Assert.Throws<System.Text.Json.JsonException>(() => CodexBar.Parse("{}"));
 
     [Fact]

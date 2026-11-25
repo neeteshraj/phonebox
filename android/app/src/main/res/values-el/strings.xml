@@ -45,4 +45,5 @@
     <string name="widget_prev">Προηγούμενο</string>
     <string name="widget_playpause">Αναπαραγωγή / παύση</string>
     <string name="widget_next">Επόμενο</string>
+    <string name="webview_failed">Ο πίνακας δεν μπορεί να λειτουργήσει σε αυτό το τηλέφωνο: το Android δεν μπόρεσε να ξεκινήσει το WebView. Ορισμένα τηλέφωνα με Android 5 δεν μπορούν να τρέξουν τις εκδόσεις WebView που χρειάζεται το PhoneBox.</string>
 </resources>

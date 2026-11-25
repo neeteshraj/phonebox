@@ -21,6 +21,11 @@ public sealed class AgentConfig
     public ClaudeConfig Claude { get; set; } = new();
     /// <summary>Cursor agent-transcript sessions on the AI sessions widget (off by default).</summary>
     public CursorConfig Cursor { get; set; } = new();
+    /// <summary>Antigravity chats on the AI sessions widget (off by default).</summary>
+    public AntigravityConfig Antigravity { get; set; } = new();
+    /// <summary>OpenCode prompts and sessions on the phone; everything is off until the settings page turns it on.</summary>
+    [JsonPropertyName("opencode")]
+    public OpenCodeConfig OpenCode { get; set; } = new();
     public List<PageConfig> Pages { get; set; } = [];
     public List<Shortcut> Shortcuts { get; set; } = [];
     public List<RuleConfig> Rules { get; set; } = [];
@@ -45,6 +50,10 @@ public sealed class AgentConfig
     public ConsoleConfig Console { get; set; } = new();
     /// <summary>Remote desktop (macOS): the phone views this computer's screen and controls it (off by default).</summary>
     public RemoteConfig Remote { get; set; } = new();
+    /// <summary>Steam friends presence (the Web API key stays on this computer and is never sent to the phone).</summary>
+    public SteamConfig Steam { get; set; } = new();
+    /// <summary>The phone's microphone, played into a virtual audio cable (Windows; off by default).</summary>
+    public PhoneMicConfig PhoneMic { get; set; } = new();
 
     /// <summary>The pages a phone shows: its own selection (Settings › Phones), or all of them.</summary>
     public IEnumerable<PageConfig> PagesFor(string? deviceId)
@@ -55,16 +64,30 @@ public sealed class AgentConfig
         return chosen.Count > 0 ? chosen : Pages;
     }
 
+    /// <summary>The home page a device chose for itself, if that page is enabled and among the ones it shows; null
+    /// otherwise, so a disabled one falls back to the global home page (the panel drops disabled pages before it looks).</summary>
+    public string? HomePageFor(string? deviceId)
+    {
+        var home = Phones.FirstOrDefault(p => p.Id == deviceId)?.HomePage;
+        return home is not null && PagesFor(deviceId).Any(p => p.Id == home && p.Enabled) ? home : null;
+    }
+
     /// <summary>The part sent to the phone: commands (shortcut cmd/args/cwd, command widget scripts) are never included.</summary>
     /// <param name="shortcutIcon">A shortcut's picture: its revision (null when it has none), and whether the user uploaded
     /// it rather than it being the program's own icon; only an upload may fill a Big button (a program icon is small, or on
     /// Linux a theme logo). One lookup gives both, so they always describe the same picture.</param>
-    public object ToPublic(string? deviceId = null, Func<Shortcut, (long? Rev, bool Upload)>? shortcutIcon = null) => new
+    /// <param name="wallpaperRev">The uploaded wallpaper's revision (null without one): the panel loads the picture
+    /// with it in the URL, so a new upload is fetched and an unchanged one comes from the cache. Sent as text: a 64-bit
+    /// value loses its last digits as a JavaScript number, and two pictures could then share a cached URL.</param>
+    public object ToPublic(string? deviceId = null, Func<Shortcut, (long? Rev, bool Upload)>? shortcutIcon = null, long? wallpaperRev = null) => new
     {
         weather = Weather,
         codexBar = CodexBar,
         night = Night,
         display = Display,
+        // this device's own home page (Settings › Phones), when it has one among the pages it shows
+        homePage = HomePageFor(deviceId),
+        wallpaperRev = wallpaperRev?.ToString(System.Globalization.CultureInfo.InvariantCulture),
         pages = PagesFor(deviceId).Select(p => new
         {
             p.Id, p.Title, p.Icon, p.Enabled, p.IdleSec, p.Appearance,
@@ -80,12 +103,14 @@ public sealed class AgentConfig
         shortcuts = Shortcuts.Select(s =>
         {
             var pic = shortcutIcon?.Invoke(s);
-            return new { s.Id, s.Label, s.Icon, s.Color, toggle = s.Toggle || s.Cmd == "builtin:mute", iconRev = pic?.Rev, iconUpload = pic?.Upload == true,
+            return new { s.Id, s.Label, s.Icon, s.Color, iconSize = s.IconSize, toggle = s.Toggle || s.Cmd is "builtin:mute" or PhoneDevices.MicCmd, hold = s.LongPress is not null, cycle = s.Cmd == "builtin:cycle" && s.Cycle is { Count: > 0 }, iconRev = pic?.Rev, iconUpload = pic?.Upload == true,
                 kind = ShortcutApps.Kind(s), bundle = ShortcutApps.Bundle(s) };
         }),
         // names only (for the Rules widget); what a rule matches on stays here
         rules = Rules.Select(r => new { r.Id, r.Name, r.Enabled, r.When }),
         charge = new { Charge.Enabled, Charge.Min, Charge.Max },
+        // OpenCode prompts: how long the Allow always button waits before it can be pressed (it saves a pattern)
+        opencode = new { OpenCode.AlwaysCountdownSec },
     };
 
     /// <summary>Ending processes is allowed when an enabled page has a processes widget that allows it.</summary>
@@ -99,6 +124,31 @@ public sealed class AgentConfig
     /// <summary>True when an enabled page (including enabled Smart Stack children) shows the quota cost overview card.</summary>
     public bool ShowQuotaOverview() => Widgets(enabledPagesOnly: true)
         .Any(w => w.Type is "codexbar" or "quotas" && w.Bool("showOverview") == true);
+
+    /// <summary>True when an enabled page (including enabled Smart Stack children) shows a quota or CodexBar widget that includes Codex.</summary>
+    public bool ShowCodexQuota() => Widgets(enabledPagesOnly: true)
+        .Any(w => w.Type is "codexbar" or "quotas" && WidgetIncludesProvider(w, "codex"));
+
+    /// <summary>
+    /// True when an enabled page (including enabled Smart Stack children) shows Grok quotas: a Quotas or CodexBar
+    /// widget, or a Clock with its status line, whose providers include Grok, or a Quota ring set to Grok.
+    /// </summary>
+    public bool ShowGrokQuota() => Widgets(enabledPagesOnly: true)
+        .Any(w => w.Type switch
+        {
+            "codexbar" or "quotas" => WidgetIncludesProvider(w, "grok"),
+            "clock" => w.Bool("status") != false && WidgetIncludesProvider(w, "grok"),
+            "quotaring" => w.Str("provider") == "grok",
+            _ => false,
+        });
+
+    private bool WidgetIncludesProvider(WidgetConfig w, string id)
+    {
+        if (w.Opt("providers") is { ValueKind: JsonValueKind.Array } arr)
+            // case-sensitive, as the panel compares them: "CODEX" shows no Codex card, so it starts no polling either
+            return arr.EnumerateArray().Any(e => e.ValueKind == JsonValueKind.String && e.GetString() == id);
+        return CodexBar.Providers.Any(p => p == id);
+    }
 }
 
 public sealed class WeatherConfig
@@ -112,6 +162,12 @@ public sealed class WeatherConfig
     /// </summary>
     [JsonConverter(typeof(WeatherUnitJsonConverter))]
     public string Unit { get; set; } = "celsius";
+    /// <summary>
+    /// The Open-Meteo forecast model the phone asks for ("gfs_seamless", "ecmwf_ifs025"…), or "" for Open-Meteo's own
+    /// best match. Only the models in <see cref="WeatherModelJsonConverter.Models"/> reach the phone.
+    /// </summary>
+    [JsonConverter(typeof(WeatherModelJsonConverter))]
+    public string Model { get; set; } = "";
 }
 
 public sealed class PingConfig
@@ -134,13 +190,25 @@ public sealed class NightConfig
     public double Brightness { get; set; } = 0.02;
 }
 
+/// <summary>The wallpaper's look; the picture itself is <see cref="WallpaperStore"/>'s.</summary>
+public sealed class WallpaperConfig
+{
+    /// <summary>How much the picture is darkened under the widgets, in percent (0–90), so they stay readable.</summary>
+    public int Dim { get; set; } = 45;
+    /// <summary>Blur in pixels (0–20); a little blur keeps a busy picture from competing with the widgets.</summary>
+    public int Blur { get; set; }
+}
+
 public sealed class DisplayConfig
 {
     public AppearanceConfig? Appearance { get; set; }
-    /// <summary>UI language code ("auto", "en", "tr", "de", "fr", "es", "it", "pt", "nl", "pl", "ru", "el", "vi", "zh").</summary>
+    /// <summary>How the uploaded wallpaper (Settings › Display) is drawn behind the pages.</summary>
+    public WallpaperConfig Wallpaper { get; set; } = new();
+    /// <summary>UI language code ("auto", "en", "tr", "de", "fr", "es", "it", "pt", "pt-BR", "nl", "pl", "ru", "el", "vi", "zh").</summary>
     public string Language { get; set; } = "auto";
-    /// <summary>The codes the panel and the settings page are translated into (i18n.js).</summary>
-    internal static readonly string[] Languages = ["auto", "en", "tr", "de", "fr", "es", "it", "pt", "nl", "pl", "ru", "el", "vi", "zh"];
+    /// <summary>The codes the panel and the settings page are translated into (i18n.js). Casing matters for pt-BR:
+    /// it is a distinct entry from pt, not a variant of it, so it must survive a save in this exact form.</summary>
+    internal static readonly string[] Languages = ["auto", "en", "tr", "de", "fr", "es", "it", "pt", "pt-BR", "nl", "pl", "ru", "el", "vi", "zh", "ja", "ko", "id", "th", "uk", "hi", "cs", "ar", "zh-Hant"];
     public bool ShowSeconds { get; set; } = true;
     /// <summary>false ("14:05", default), true ("2:05 PM") or "auto" (follow the phone).</summary>
     [JsonConverter(typeof(Hour12JsonConverter))]
@@ -149,11 +217,22 @@ public sealed class DisplayConfig
     public int IdleReturnSec { get; set; } = 90;
     /// <summary>Vibrate when a session finishes or needs input.</summary>
     public bool Vibrate { get; set; } = true;
+    /// <summary>Show a message when a session finishes. The "needs input" message always shows.</summary>
+    public bool FinishToast { get; set; } = true;
+    /// <summary>Play a chime when a session finishes.</summary>
+    public bool FinishSound { get; set; }
+    /// <summary>Sound volume (% of the phone's media volume).</summary>
+    public int FinishSoundVolume { get; set; } = 70;
     /// <summary>The phone's volume keys switch pages.</summary>
     public bool VolumeKeys { get; set; } = true;
     /// <summary>landscape, portrait or auto (follow the phone). In portrait the widgets are arranged automatically.</summary>
     public string Orientation { get; set; } = "landscape";
-    /// <summary>default, amoled, midnight, warm, graphite or material.</summary>
+    /// <summary>
+    /// A landscape tablet gets more rows (12 × 8 to 12 × 10, from its shape) and an upright one packs 12 columns, so a
+    /// page holds more widgets. Off by default: turning it on changes how an arranged tablet looks.
+    /// </summary>
+    public bool TabletRows { get; set; }
+    /// <summary>default, amoled, midnight, warm, graphite, material or shadcn.</summary>
     public string Theme { get; set; } = "default";
     /// <summary>Accent colour (background glow, page dots), e.g. "#2dd4bf".</summary>
     public string Accent { get; set; } = "#2dd4bf";
@@ -163,12 +242,20 @@ public sealed class DisplayConfig
     public bool AutoBrightness { get; set; }
     /// <summary>Show the night screen whenever the room is dark, not only at night.</summary>
     public bool NightWhenDark { get; set; }
+    /// <summary>Show the night screen after the paired computer's agent has been unreachable for a while.</summary>
+    public bool NightWhenUnreachable { get; set; }
+    /// <summary>Minutes to wait after the agent becomes unreachable before showing the night screen.</summary>
+    public int UnreachableNightDelayMin { get; set; } = 5;
     /// <summary>A hand near the phone (proximity sensor) wakes the night screen.</summary>
     public bool ProximityWake { get; set; } = true;
     /// <summary>OLED burn-in protection: every 2 minutes the panel moves by a few pixels and the night clock drifts.</summary>
     public bool PixelShift { get; set; }
     /// <summary>The page dots and the permission prompt's Allow / Deny buttons at the top, for a panel whose bottom edge is hard to reach.</summary>
     public bool ControlsTop { get; set; }
+    /// <summary>How the panel shows its pages: dots, auto (a bar with each page's icon and name while the dots are used), bar (always, with its own strip of the screen) or hidden (no dots: swipe, and hold an empty spot for all pages).</summary>
+    public string PageBar { get; set; } = "dots";
+    /// <summary>Where the page bar goes: bottom (the top with <see cref="ControlsTop"/>), left or right.</summary>
+    public string PageBarSide { get; set; } = "bottom";
     /// <summary>OLED burn-in protection: dim the panel after this many minutes without a touch; 0 = never.</summary>
     public int IdleDimMin { get; set; }
     /// <summary>Screen pinning: Home and Recents stay on the panel.</summary>
@@ -178,8 +265,17 @@ public sealed class DisplayConfig
 
     /// <summary>Over USB, turn off Android's screen saver (it starts on the dock / charger) and keep the phone awake while it is plugged in.</summary>
     public bool KeepAwake { get; set; } = true;
+    /// <summary>Over USB, wake the phone and open PhoneBox when it is plugged in (or adb reconnects). Off: the panel opens only
+    /// when you start it on the phone, from the tray or the settings page.</summary>
+    public bool OpenOnConnect { get; set; } = true;
     /// <summary>On macOS, sleep the connected phone when the computer locks; wake it and open PhoneBox after unlock.</summary>
     public bool FollowComputerLock { get; set; }
+    /// <summary>When the agent opens PhoneBox on a phone just plugged in over USB (with <see cref="OpenOnConnect"/> on),
+    /// step over a swipe-only lock screen. A PIN, pattern or password is never passed. Off: the phone shows its lock
+    /// screen. (Follow the computer lock has its own unlock and does not use this.)</summary>
+    public bool WakeOnUnlock { get; set; }
+    /// <summary>Also sleep the connected phone screen whenever the Lock shortcut (builtin:lock) is executed.</summary>
+    public bool LockPhoneWithShortcut { get; set; }
     /// <summary>The page the panel returns to (idle return, Back); null = the first page.</summary>
     public string? HomePage { get; set; }
     /// <summary>Seconds the panel counts down ("Switching to … in 3") before a rule or the idle return changes the page; 0 = at once.</summary>
@@ -212,10 +308,13 @@ public sealed class UpdateConfig
 
 public sealed class ClaudeConfig
 {
-    /// <summary>Show Claude Code permission prompts on the phone (needs the hook, see Settings › General).</summary>
+    /// <summary>Show AI coding-agent permission prompts on the phone (needs an agent hook, see Settings › General).</summary>
     public bool PhoneApprovals { get; set; } = true;
-    /// <summary>How long the phone may take before Claude Code asks in the terminal instead.</summary>
+    /// <summary>How long the phone may take before the coding agent asks in its normal UI instead.</summary>
     public int TimeoutSec { get; set; } = 90;
+    /// <summary>Let the phone open a Claude Code session's recent messages and steps, read from its chat file on this
+    /// computer. They are your prompts and Claude's replies, so this stays off until you turn it on.</summary>
+    public bool ShareConversation { get; set; }
     /// <summary>Only use the phone when the PC has been idle for a minute (you are away from the keyboard).</summary>
     public bool OnlyWhenAway { get; set; }
     /// <summary>Let the phone send a prompt to a Claude Code / Codex session (runs the CLI's headless resume, see SessionPrompts).</summary>
@@ -223,6 +322,9 @@ public sealed class ClaudeConfig
     /// <summary>Show each Claude Code chat's title on the phone. The title is the name you gave the chat or the one
     /// Claude Code wrote, which it often draws from your first prompt, so it stays off until you turn it on.</summary>
     public bool ShareSessionTitles { get; set; }
+    /// <summary>Windows: also show the Claude Code sessions (and use the sign-in for the quota, when Windows has none)
+    /// of the running WSL distros' default users. A stopped distro is never started for it (off by default).</summary>
+    public bool WatchWsl { get; set; }
 }
 
 public sealed class RemoteConfig
@@ -235,6 +337,41 @@ public sealed class CursorConfig
 {
     /// <summary>Show recent Cursor agent chats on the AI sessions widget (off by default).</summary>
     public bool Sessions { get; set; }
+    /// <summary>Windows: also read the agent chats Cursor keeps inside the running WSL distros (projects opened over
+    /// Remote - WSL). A stopped distro is never started for it (off by default).</summary>
+    public bool WatchWsl { get; set; }
+    /// <summary>Show the commands and MCP tool calls the Cursor agent is about to run on the phone, with Allow / Deny
+    /// (needs the Cursor hook, see Settings › General). Cursor's hook runs before every command, also the ones it would
+    /// run by itself, and waits for the phone while one is connected, so this stays off until you turn it on.</summary>
+    public bool PhoneApprovals { get; set; }
+}
+
+public sealed class AntigravityConfig
+{
+    /// <summary>Show recent Antigravity chats on the AI sessions widget (off by default).</summary>
+    public bool Sessions { get; set; }
+    /// <summary>Show each Antigravity chat's title from its local annotation file on the phone (off by default).</summary>
+    public bool ShareSessionTitles { get; set; }
+}
+
+public sealed class OpenCodeConfig
+{
+    /// <summary>Show OpenCode permission prompts on the phone. Off until Settings › General turns it on: letting the
+    /// phone approve commands is opt-in, like Claude Code's hook install.</summary>
+    public bool PhoneApprovals { get; set; }
+    /// <summary>Show recent OpenCode sessions on the AI sessions widget (off by default, like Cursor's).</summary>
+    public bool Sessions { get; set; }
+    /// <summary>How long the phone may answer before the prompt is left to OpenCode's own window on the desktop.</summary>
+    public int TimeoutSec { get; set; } = 90;
+    /// <summary>Only use the phone when the PC has been idle for a minute (OpenCode's own prompt is on the screen otherwise).</summary>
+    public bool OnlyWhenAway { get; set; }
+    /// <summary>Seconds the Allow always button waits before it can be pressed (it saves a pattern for the project); 0 arms it at once.</summary>
+    public int AlwaysCountdownSec { get; set; } = 10;
+    /// <summary>Also watch OpenCode inside WSL distros that are already running (see OpenCodeServices); off until turned on.</summary>
+    public bool WatchWsl { get; set; }
+    /// <summary>Show each OpenCode session's title on the phone. OpenCode draws the titles from the conversation,
+    /// so they stay off the phone until you turn this on, like Claude's shareSessionTitles.</summary>
+    public bool ShareSessionTitles { get; set; }
 }
 
 public sealed class PageConfig
@@ -247,7 +384,7 @@ public sealed class PageConfig
     public bool Enabled { get; set; } = true;
     /// <summary>Return home after this many idle seconds on this page; null = the display setting, 0 = stay.</summary>
     public int? IdleSec { get; set; }
-    /// <summary>Widgets on a 12 x 6 grid.</summary>
+    /// <summary>Widgets on a 12-column grid: 6 rows on a phone, more on a tablet (up to <see cref="Catalog.MaxRows"/>).</summary>
     public List<WidgetConfig>? Widgets { get; set; }
 
     /// <summary>Create the page from this template (templates.json) when it has no widgets yet.</summary>
@@ -340,6 +477,28 @@ public sealed class ChargeConfig
     public string? OffShortcut { get; set; }
 }
 
+/// <summary>
+/// The phone mic (see PhoneMic.cs): scrcpy-server 5.0.1 on the phone sends raw PCM over adb, played into a render
+/// endpoint picked by name (a virtual cable, so apps pick its other end as their microphone).
+/// </summary>
+public sealed class PhoneMicConfig
+{
+    public bool Enabled { get; set; }
+    /// <summary>scrcpy audio source: "mic-camcorder" (loud, no echo cancelling) works while an assistant holds "mic".</summary>
+    public string Source { get; set; } = "mic-camcorder";
+    /// <summary>The first active playback device whose name contains this.</summary>
+    public string Endpoint { get; set; } = "CABLE Input";
+    /// <summary>Audio kept buffered before playing (ms); more piles up only to <see cref="MaxBufferMs"/>.</summary>
+    public int LatencyMs { get; set; } = 50;
+    public int MaxBufferMs { get; set; } = 150;
+    /// <summary>Linear gain (1 = as captured).</summary>
+    public double Gain { get; set; } = 1;
+    /// <summary>scrcpy-server 5.0.1 (empty: "scrcpy-server" next to the agent or next to the config file).</summary>
+    public string? ServerPath { get; set; }
+    /// <summary>Starts muted (the phone's Control Deck button toggles it while the agent runs).</summary>
+    public bool StartMuted { get; set; }
+}
+
 public sealed class ObsConfig
 {
     public bool Enabled { get; set; }
@@ -352,6 +511,30 @@ public sealed class DiscordConfig
     public bool Enabled { get; set; }
     public string? ClientId { get; set; }
     public string? ClientSecret { get; set; }
+    /// <summary>
+    /// Allow mute, deafen, leave and join through <c>/api/discord/{action}</c> without a Discord widget: for shortcuts,
+    /// scripts and custom widgets. Off by default; then only a Discord widget with its <c>control</c> option on, on an
+    /// enabled page, allows them.
+    /// </summary>
+    public bool AllowControl { get; set; }
+    /// <summary>
+    /// Screen share from the phone (off by default). Asks Discord for rpc.screenshare.read / .write, so Discord asks to
+    /// approve PhoneBox again; lists the apps with a window (names only) while the share view is open on the phone.
+    /// </summary>
+    public bool ScreenShare { get; set; }
+    /// <summary>
+    /// The Discord widget's chat (read-only) and new-message dots: asks Discord for the <c>messages.read</c> scope (one
+    /// more approval in Discord) and sends message text to the phone. Off by default. Message text stays in the agent's
+    /// memory only, for as long as the connection to Discord lasts.
+    /// </summary>
+    public bool Chat { get; set; }
+}
+
+public sealed class SteamConfig
+{
+    public bool Enabled { get; set; }
+    public string? SteamId { get; set; }
+    public string? ApiKey { get; set; }
 }
 
 public sealed class HomeAssistantConfig
@@ -367,12 +550,15 @@ public sealed class PhoneConfig
     public string Name { get; set; } = "";
     /// <summary>Page ids this phone shows, in the usual order; empty or null = all pages.</summary>
     public List<string>? Pages { get; set; }
+    /// <summary>The page this device returns to (idle return, home button); null = the global home page.</summary>
+    public string? HomePage { get; set; }
 }
 
 public sealed class FeedSource
 {
     public string Name { get; set; } = "";
     public string Url { get; set; } = "";
+    public string Category { get; set; } = "";
 }
 
 public sealed class CalendarSource
@@ -389,7 +575,12 @@ public sealed class Shortcut
     [JsonConverter(typeof(IconJsonConverter))]
     public string Icon { get; set; } = "";
     public string Color { get; set; } = "#6b7280";
-    /// <summary>A program, address or file; or builtin:lock / monitor-off / mute / keys / text / macro.</summary>
+    /// <summary>How big the icon (emoji or picture) is on the phone's key: empty = default, "m", "l" or "max" (fills the key).</summary>
+    [JsonConverter(typeof(IconSizeJsonConverter))]
+    public string? IconSize { get; set; }
+    public static readonly string[] IconSizes = ["m", "l", "max"];
+    /// <summary>A program, address or file; or builtin:lock / monitor-off / mute / keys / text / macro, or the phone
+    /// mic command (builtin:phone-mic, see PhoneDevices).</summary>
     public string Cmd { get; set; } = "";
     /// <summary>Program arguments; the key combination for builtin:keys ("ctrl+shift+m"); the text for builtin:text.</summary>
     public string? Args { get; set; }
@@ -403,6 +594,11 @@ public sealed class Shortcut
     /// <summary>For toggles: the command (and arguments) that switch it off; empty = the same as switching on.</summary>
     public string? OffCmd { get; set; }
     public string? OffArgs { get; set; }
+    /// <summary>Id of another shortcut that a long press on this key runs instead (the phone only says "held"; the id is looked up here).</summary>
+    public string? LongPress { get; set; }
+    /// <summary>builtin:cycle: ids of the shortcuts to run one after another, a tap each; the key shows the one that ran last.</summary>
+    public List<string>? Cycle { get; set; }
+    public const int MaxCycle = 20;
 }
 
 /// <summary>Reads/writes config.json; external edits are picked up on the next request.</summary>
@@ -411,7 +607,7 @@ public sealed partial class ConfigStore(string path)
     /// <summary>Pages a fresh install (or an empty page list) starts with.</summary>
     public static readonly string[] DefaultPages = ["home", "ai", "work", "system", "procs", "deck"];
 
-    private static readonly JsonSerializerOptions ReadOpts = new()
+    public static readonly JsonSerializerOptions ReadOpts = new()
     {
         PropertyNameCaseInsensitive = true,
         ReadCommentHandling = JsonCommentHandling.Skip,
@@ -425,6 +621,14 @@ public sealed partial class ConfigStore(string path)
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping, // keep emoji and non-ASCII text readable
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     };
+
+    /// <summary>Retain a secret redacted from settings GETs when a client sends it back as missing or null.</summary>
+    internal static bool PreserveSteamApiKey(AgentConfig? proposed, string? storedKey)
+    {
+        if (proposed?.Steam is not { ApiKey: null } steam || storedKey is null) return false;
+        steam.ApiKey = storedKey;
+        return true;
+    }
 
     private readonly Lock _lock = new();
     private AgentConfig _config = Normalize(new AgentConfig());
@@ -476,7 +680,29 @@ public sealed partial class ConfigStore(string path)
     /// Advances <see cref="Version"/> without touching the saved settings: for a write that bypasses <see cref="Save"/>
     /// (a shortcut icon upload or removal), so another tab's own optimistic-concurrency check still notices it.
     /// </summary>
-    public void Touch() { lock (_lock) { try { File.SetLastWriteTimeUtc(path, DateTime.UtcNow); } catch { } } }
+    public void Touch()
+    {
+        lock (_lock)
+        {
+            try
+            {
+                var before = File.GetLastWriteTimeUtc(path);
+                File.SetLastWriteTimeUtc(path, DateTime.UtcNow);
+                Advance(before);
+            }
+            catch { }
+        }
+    }
+
+    /// <summary>
+    /// Makes sure a write moved <see cref="Version"/> on. It is the file's write time, which Windows keeps in coarse steps
+    /// (often 1-16 ms): two writes in one step would leave the same version, and a caller holding the version from before
+    /// the first would not see the second as a conflict. Call under <c>_lock</c>, right after the write.
+    /// </summary>
+    private void Advance(DateTime before)
+    {
+        if (File.GetLastWriteTimeUtc(path) <= before) File.SetLastWriteTimeUtc(path, before.AddTicks(1));
+    }
 
     /// <summary>
     /// Validates and saves the settings. Returns an error message, or null on success. With
@@ -496,7 +722,12 @@ public sealed partial class ConfigStore(string path)
         var staleIds = Get().Shortcuts.Select(s => s.Id).ToHashSet(StringComparer.Ordinal);
         cfg = Normalize(cfg, staleIds);
         foreach (var s in cfg.Shortcuts)
+        {
             if (string.IsNullOrWhiteSpace(s.Cmd)) return $"Shortcut '{s.Label}' has no command";
+            if (s.Cmd == "builtin:wake" && WakeOnLan.ParseArgs(s.Args, out _, out _) is { } wakeError) return $"Shortcut '{s.Label}': {wakeError}";
+            // a toggle's off action runs through the same path while the toggle is on
+            if (s.OffCmd == "builtin:wake" && WakeOnLan.ParseArgs(s.OffArgs, out _, out _) is { } offWakeError) return $"Shortcut '{s.Label}' (off action): {offWakeError}";
+        }
         if (cfg.Console.Profiles.Count > AppConsole.MaxProfiles) return $"The app console has more than {AppConsole.MaxProfiles} apps";
         foreach (var p in cfg.Console.Profiles)
             if (AppConsole.Validate(p) is { } consoleError) return consoleError;
@@ -509,7 +740,8 @@ public sealed partial class ConfigStore(string path)
 
         lock (_lock)
         {
-            if (expectedVersion is { } expected && File.GetLastWriteTimeUtc(path).Ticks != expected) return Conflict;
+            var before = File.GetLastWriteTimeUtc(path);
+            if (expectedVersion is { } expected && before.Ticks != expected) return Conflict;
             var directory = System.IO.Path.GetDirectoryName(path);
             if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
             var tmp = path + ".tmp";
@@ -517,6 +749,7 @@ public sealed partial class ConfigStore(string path)
             AppPaths.WriteAllTextPrivate(tmp, JsonSerializer.Serialize(cfg, WriteOpts));
             if (File.Exists(path)) AppPaths.CopyPrivate(path, path + ".bak");
             File.Move(tmp, path, overwrite: true);
+            Advance(before);
             _config = cfg;
             _stamp = _seen = File.GetLastWriteTimeUtc(path);
             savedVersion = _seen.Ticks;
@@ -529,8 +762,10 @@ public sealed partial class ConfigStore(string path)
     {
         c.Weather ??= new();
         c.Weather.Unit = WeatherUnitJsonConverter.Normalize(c.Weather.Unit);
+        c.Weather.Model = WeatherModelJsonConverter.Normalize(c.Weather.Model);
         c.CodexBar ??= new();
-        c.CodexBar.Providers = (c.CodexBar.Providers ?? []).Where(p => p is "claude" or "codex" or "antigravity").Distinct().ToArray();
+        // The same ids as the checkboxes in settings.html (cb_claude, cb_codex, cb_antigravity, cb_grok).
+        c.CodexBar.Providers = (c.CodexBar.Providers ?? []).Where(p => p is "claude" or "codex" or "antigravity" or "grok").Distinct().ToArray();
         c.CodexBar.PageSize = Math.Clamp(c.CodexBar.PageSize, 0, 6);
         c.CodexBar.RotateInterval = Math.Clamp(c.CodexBar.RotateInterval, 2, 300);
         c.Night ??= new();
@@ -541,18 +776,31 @@ public sealed partial class ConfigStore(string path)
         foreach (var action in c.Controls.Actions) { action.Target ??= ""; action.Kind ??= "shortcut"; action.Label ??= action.Id; }
         c.Controls.Profiles = c.Controls.Profiles.Where(p => p is not null && !string.IsNullOrWhiteSpace(p.Id)).DistinctBy(p => p.Id).Take(128).ToList();
         foreach (var profile in c.Controls.Profiles) { profile.Levels = (profile.Levels ?? []).Where(l => l is not null).Take(512).ToList(); profile.Defaults ??= []; profile.Actions = (profile.Actions ?? []).Where(a => !string.IsNullOrEmpty(a)).Take(64).ToList(); profile.Label ??= profile.Id; }
+        c.Controls.PlexUrl = PlexControl.NormalizeUrl(c.Controls.PlexUrl);
+        c.Controls.PlexPlayerUrl = PlexControl.NormalizeUrl(c.Controls.PlexPlayerUrl) ?? PlexControl.DefaultPlayerUrl;
+        // a control character (a stray newline from a paste) can't be part of a token, and would break the request header
+        c.Controls.PlexToken = new string((c.Controls.PlexToken ?? "").Where(ch => !char.IsControl(ch)).ToArray()).Trim() is { Length: > 0 } plexToken
+            ? Cap(plexToken, 256) : null;
         c.Display ??= new();
         c.Display.Appearance?.Normalize();
         c.Display.Hour12 = Hour12JsonConverter.Normalize(c.Display.Hour12);
+        c.Display.PageBar = c.Display.PageBar is "dots" or "auto" or "bar" or "hidden" ? c.Display.PageBar : "dots";
+        c.Display.PageBarSide = c.Display.PageBarSide is "bottom" or "left" or "right" ? c.Display.PageBarSide : "bottom";
         c.Display.IdleReturnSec = Math.Clamp(c.Display.IdleReturnSec, 0, 3600);
         c.Display.IdleDimMin = Math.Clamp(c.Display.IdleDimMin, 0, 1440);
-        // a language the panel does not have falls back to following the phone / browser
-        var lang = (c.Display.Language ?? "").Trim().ToLowerInvariant();
-        c.Display.Language = DisplayConfig.Languages.Contains(lang) ? lang : "auto";
+        c.Display.Wallpaper ??= new();
+        c.Display.Wallpaper.Dim = Math.Clamp(c.Display.Wallpaper.Dim, 0, 90);
+        c.Display.Wallpaper.Blur = Math.Clamp(c.Display.Wallpaper.Blur, 0, 20);
+        c.Display.UnreachableNightDelayMin = Math.Clamp(c.Display.UnreachableNightDelayMin, 1, 30);
+        // a language the panel does not have falls back to following the phone / browser. Matched case-insensitively
+        // so "PT-br" still resolves, but stored in its canonical casing: i18n.js looks pt-BR up by exact code.
+        var lang = (c.Display.Language ?? "").Trim();
+        c.Display.Language = DisplayConfig.Languages.FirstOrDefault(l => l.Equals(lang, StringComparison.OrdinalIgnoreCase)) ?? "auto";
         c.Display.SwitchCountdownSec = Math.Clamp(c.Display.SwitchCountdownSec, 0, 30);
         c.Display.TouchGraceSec = Math.Clamp(c.Display.TouchGraceSec, 0, 600);
         c.Display.MinDwellSec = Math.Clamp(c.Display.MinDwellSec, 0, 600);
         c.Display.HoldMaxMin = Math.Clamp(c.Display.HoldMaxMin, 0, 1440);
+        c.Display.FinishSoundVolume = Math.Clamp(c.Display.FinishSoundVolume, 10, 100);
         c.Lan ??= new();
         c.Updates ??= new();
         c.Ping ??= new();
@@ -562,6 +810,10 @@ public sealed partial class ConfigStore(string path)
         c.Claude.TimeoutSec = Math.Clamp(c.Claude.TimeoutSec, 10, 3600);
         c.Cursor ??= new();
         c.Remote ??= new();
+        c.Antigravity ??= new();
+        c.OpenCode ??= new();
+        c.OpenCode.TimeoutSec = Math.Clamp(c.OpenCode.TimeoutSec, 10, 3600);
+        c.OpenCode.AlwaysCountdownSec = Math.Clamp(c.OpenCode.AlwaysCountdownSec, 0, 60);
         if (string.IsNullOrWhiteSpace(c.Updates.Repo)) c.Updates.Repo = "ersinkoc/phonebox";
         c.Lan.Port = Math.Clamp(c.Lan.Port, 1024, 65535);
         if (string.IsNullOrWhiteSpace(c.Lan.Token)) c.Lan.Token = NewToken();
@@ -613,19 +865,52 @@ public sealed partial class ConfigStore(string path)
             if (string.IsNullOrWhiteSpace(s.OffCmd)) s.OffCmd = null;
             if (string.IsNullOrWhiteSpace(s.OffArgs)) s.OffArgs = null;
         }
+        // icon size: only the known presets; anything else falls back to the default
+        foreach (var s in c.Shortcuts)
+        {
+            var sz = s.IconSize?.Trim().ToLowerInvariant();
+            s.IconSize = sz is not null && Shortcut.IconSizes.Contains(sz) ? sz : null;
+        }
+        // a long press runs another key: drop a blank, self-referencing or dangling target, so the phone never offers a hold that does nothing
+        foreach (var s in c.Shortcuts)
+        {
+            s.LongPress = s.LongPress?.Trim();
+            if (string.IsNullOrEmpty(s.LongPress) || s.LongPress == s.Id || !c.Shortcuts.Any(o => o.Id == s.LongPress)) s.LongPress = null;
+        }
+        // a cycle key: the keys it runs must exist (a deleted or renamed one drops out), and none of them is the cycle itself
+        foreach (var s in c.Shortcuts)
+        {
+            s.Cycle = s.Cmd == "builtin:cycle"
+                ? (s.Cycle ?? []).Select(x => x?.Trim() ?? "").Where(x => x != s.Id && c.Shortcuts.Any(o => o.Id == x)).Take(Shortcut.MaxCycle).ToList()
+                : null;
+            // a cycle key runs the next key, not a command of its own: an on / off setting would bypass the cycle
+            if (s.Cmd == "builtin:cycle") { s.Toggle = false; s.StateKey = null; s.OffCmd = null; s.OffArgs = null; }
+        }
         c.Phones = (c.Phones ?? []).Where(p => p is not null && !string.IsNullOrWhiteSpace(p.Id)).GroupBy(p => p.Id).Select(g => g.First()).Take(20).ToList();
         foreach (var ph in c.Phones)
         {
             ph.Name = ph.Name?.Trim() ?? "";
             ph.Pages = ph.Pages?.Where(id => !string.IsNullOrWhiteSpace(id)).Select(PageId).Distinct().ToList();
             if (ph.Pages is { Count: 0 }) ph.Pages = null;
+            ph.HomePage = string.IsNullOrWhiteSpace(ph.HomePage) ? null : PageId(ph.HomePage).Trim();
         }
         c.Ping ??= new();
         c.Ping.Adapters = (c.Ping.Adapters ?? []).Where(a => !string.IsNullOrWhiteSpace(a)).Select(a => a.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).Take(16).ToList();
         c.Obs ??= new();
+        c.PhoneMic ??= new();
+        var mic = c.PhoneMic;
+        if (!ScrcpyAudio.MicSources.Contains(mic.Source)) mic.Source = "mic-camcorder";
+        mic.Endpoint = string.IsNullOrWhiteSpace(mic.Endpoint) ? "CABLE Input" : mic.Endpoint.Trim();
+        mic.LatencyMs = Math.Clamp(mic.LatencyMs, 10, 500);
+        mic.MaxBufferMs = Math.Clamp(mic.MaxBufferMs, mic.LatencyMs + 20, 900);
+        mic.Gain = double.IsFinite(mic.Gain) ? Math.Clamp(mic.Gain, 0, 8) : 1;
+        mic.ServerPath = string.IsNullOrWhiteSpace(mic.ServerPath) ? null : mic.ServerPath.Trim();
         c.Discord ??= new();
         c.Discord.ClientId = string.IsNullOrWhiteSpace(c.Discord.ClientId) ? null : c.Discord.ClientId.Trim();
         c.Discord.ClientSecret = string.IsNullOrWhiteSpace(c.Discord.ClientSecret) ? null : c.Discord.ClientSecret.Trim();
+        c.Steam ??= new();
+        c.Steam.SteamId = string.IsNullOrWhiteSpace(c.Steam.SteamId) ? null : c.Steam.SteamId.Trim();
+        c.Steam.ApiKey = string.IsNullOrWhiteSpace(c.Steam.ApiKey) ? null : c.Steam.ApiKey.Trim();
         if (string.IsNullOrWhiteSpace(c.Obs.Url)) c.Obs.Url = "ws://127.0.0.1:4455";
         c.HomeAssistant ??= new();
         c.HomeAssistant.Url = string.IsNullOrWhiteSpace(c.HomeAssistant.Url) ? null : c.HomeAssistant.Url.Trim().TrimEnd('/');
@@ -654,7 +939,20 @@ public sealed partial class ConfigStore(string path)
         c.Feeds = (c.Feeds ?? []).Where(x => x is not null).Take(30).ToList();
         c.Photos ??= new();
         c.Photos.Folder = (c.Photos.Folder ?? "").Trim() is { Length: > 1024 } longFolder ? longFolder[..1024] : (c.Photos.Folder ?? "").Trim();
-        foreach (var f in c.Feeds) { var n = f.Name?.Trim() ?? ""; f.Name = n.Length > 60 ? n[..60] : n; f.Url = f.Url?.Trim() ?? ""; }
+        c.Photos.Source = string.Equals(c.Photos.Source?.Trim(), PhotoFrameConfig.SourceImmich, StringComparison.OrdinalIgnoreCase) ? PhotoFrameConfig.SourceImmich : PhotoFrameConfig.SourceFolder;
+        c.Photos.ImmichUrl = Cap((c.Photos.ImmichUrl ?? "").Trim(), 2048);
+        // a control character (a stray newline from a paste) can't be part of a key, and would break the request header
+        c.Photos.ImmichKey = Cap(new string((c.Photos.ImmichKey ?? "").Where(ch => !char.IsControl(ch)).ToArray()).Trim(), 256);
+        c.Photos.ImmichAlbum = Cap((c.Photos.ImmichAlbum ?? "").Trim(), 64);
+        c.Photos.ImmichAlbumName = Cap((c.Photos.ImmichAlbumName ?? "").Trim(), 200);
+        foreach (var f in c.Feeds)
+        {
+            var n = f.Name?.Trim() ?? "";
+            f.Name = n.Length > 60 ? n[..60] : n;
+            f.Url = f.Url?.Trim() ?? "";
+            var cat = f.Category?.Trim() ?? "";
+            f.Category = cat.Length > 40 ? cat[..40] : cat;
+        }
         c.Cameras ??= new();
         c.Cameras.Ffmpeg = (c.Cameras.Ffmpeg ?? "").Trim() is { Length: > 1024 } longFfmpeg ? longFfmpeg[..1024] : (c.Cameras.Ffmpeg ?? "").Trim();
         // a row left empty in the editor is dropped; ids are random and kept, so widgets keep pointing at the same camera
@@ -748,9 +1046,9 @@ public sealed partial class ConfigStore(string path)
                 w.Appearance?.Normalize(widget: true);
                 var (minW, minH) = Catalog.MinSize(w.Type);
                 w.W = Math.Clamp(w.W, Math.Min(minW, Catalog.Cols), Catalog.Cols);
-                w.H = Math.Clamp(w.H, Math.Min(minH, Catalog.Rows), Catalog.Rows);
+                w.H = Math.Clamp(w.H, Math.Min(minH, Catalog.MaxRows), Catalog.MaxRows);
                 w.X = Math.Clamp(w.X, 0, Catalog.Cols - w.W);
-                w.Y = Math.Clamp(w.Y, 0, Catalog.Rows - w.H);
+                w.Y = Math.Clamp(w.Y, 0, Catalog.MaxRows - w.H);
                 w.Id = reservedWidgets.TryGetValue(w, out var reservedWidget)
                     ? reservedWidget : UniqueLayoutId(LayoutId(w.Type, w.Type), widgetIds);
                 widgets.Add(w);
@@ -875,10 +1173,12 @@ public sealed partial class ConfigStore(string path)
 
 public sealed class CodexBarConfig
 {
-    public string[] Providers { get; set; } = ["claude", "codex", "antigravity"];
+    public string[] Providers { get; set; } = ["claude", "codex", "antigravity", "grok"];
     public bool Rotate { get; set; } = true;
     public int PageSize { get; set; } = 2;
     public int RotateInterval { get; set; } = 8;
+    /// <summary>Opt-in: poll live Codex quotas through the local Codex CLI app-server (off by default).</summary>
+    public bool CodexLiveQuota { get; set; }
 }
 
 /// <summary>
@@ -894,6 +1194,28 @@ internal sealed class WeatherUnitJsonConverter : JsonConverter<string>
         if (reader.TokenType == JsonTokenType.String) return Normalize(reader.GetString());
         reader.Skip();
         return "celsius";
+    }
+
+    public override void Write(Utf8JsonWriter writer, string value, JsonSerializerOptions options) => writer.WriteStringValue(Normalize(value));
+}
+
+/// <summary>
+/// weather.model: one of the Open-Meteo models the settings offer, anything else "" (Open-Meteo's best match). The value
+/// goes into the phone's forecast URL, so only known names pass; like the unit, a non-string token is skipped.
+/// </summary>
+internal sealed class WeatherModelJsonConverter : JsonConverter<string>
+{
+    public static readonly string[] Models =
+        ["gfs_seamless", "ecmwf_ifs025", "icon_seamless", "ukmo_seamless", "gem_seamless", "jma_seamless", "meteofrance_seamless", "cma_grapes_global"];
+
+    public static string Normalize(string? value) =>
+        Models.FirstOrDefault(m => string.Equals(m, value?.Trim(), StringComparison.OrdinalIgnoreCase)) ?? "";
+
+    public override string Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        if (reader.TokenType == JsonTokenType.String) return Normalize(reader.GetString());
+        reader.Skip();
+        return "";
     }
 
     public override void Write(Utf8JsonWriter writer, string value, JsonSerializerOptions options) => writer.WriteStringValue(Normalize(value));

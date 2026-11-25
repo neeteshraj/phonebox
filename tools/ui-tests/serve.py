@@ -25,5 +25,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     }
 
 
+class Server(http.server.ThreadingHTTPServer):
+    # socketserver's default listen backlog is 5. The panel loads dozens of modules at once and the suite runs several
+    # workers; Windows refuses connections once the backlog is full (Linux queues them), which shows up as
+    # net::ERR_CONNECTION_REFUSED and page loads that half-fail.
+    request_queue_size = 128
+
+
 directory, port = sys.argv[1], int(sys.argv[2])
-http.server.test(HandlerClass=functools.partial(Handler, directory=directory), port=port, bind='127.0.0.1')
+http.server.test(HandlerClass=functools.partial(Handler, directory=directory), ServerClass=Server, port=port, bind='127.0.0.1')

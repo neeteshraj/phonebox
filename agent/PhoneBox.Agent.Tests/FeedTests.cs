@@ -10,6 +10,26 @@ namespace PhoneBox.Agent.Tests;
 
 public sealed class FeedParserTests
 {
+    [Theory]
+    [InlineData("https://www.francetvinfo.fr/monde/a_1.html#xtor=RSS-3-[lestitres]", "https://www.francetvinfo.fr/monde/a_1.html#xtor=RSS-3-%5Blestitres%5D")]
+    [InlineData("https://a.example/p[1]?q=[a]#f", "https://a.example/p%5B1%5D?q=%5Ba%5D#f")]
+    [InlineData("http://[::1]:8080/x[y]", "http://[::1]:8080/x%5By%5D")]
+    [InlineData("https://user@a.example/plain?q=1#top", "https://user@a.example/plain?q=1#top")]
+    public void TheLaunchedAddressHasNoRawBracketsAfterTheHost(string link, string expected) =>
+        Assert.Equal(expected, FeedParser.LaunchAddress(FeedParser.SafeLink(link)!));
+
+    // #386, #411: explorer.exe opens File Explorer instead of the browser for some addresses (a 473-character one, a short
+    // one with a query string), so the address goes to url.dll instead
+    [Fact]
+    public void ALongArticleAddressIsNotHandedToExplorerOnWindows()
+    {
+        var uri = FeedParser.SafeLink("https://example.com/?q=" + new string('a', 450) + "&x=[1]")!;
+        var psi = FeedMonitor.BrowserStart(uri, windows: true, mac: false);
+        Assert.Equal("rundll32.exe", Path.GetFileName(psi.FileName).ToLowerInvariant());
+        Assert.False(psi.UseShellExecute); // .coderabbit.yaml: ArgumentList only, no shell
+        Assert.Equal(["url.dll,FileProtocolHandler", FeedParser.LaunchAddress(uri)], psi.ArgumentList);
+    }
+
     private static readonly Uri Base = new("https://example.com/blog/feed.xml");
     private static List<FeedItem> Parse(string xml, int max = 50) => FeedParser.Parse(Encoding.UTF8.GetBytes(xml), Base, "k", max);
 
@@ -493,17 +513,44 @@ public sealed class FeedMonitorTests : IDisposable
     [Fact]
     public void TheLinkNeverReachesThePhone()
     {
-        var json = System.Text.Json.JsonSerializer.Serialize(new FeedItem("id", "t", "s", 1, "https://secret.example/?token=abc"),
+        var json = System.Text.Json.JsonSerializer.Serialize(new FeedItem("id", "t", "s", 1, "https://secret.example/?token=abc", "Tech"),
             new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
         Assert.DoesNotContain("secret", json);
         Assert.Contains("\"openable\":true", json);
+        Assert.Contains("\"category\":\"Tech\"", json);
+    }
+
+    [Fact]
+    public async Task FeedCategoriesAreAttachedToItems()
+    {
+        var cfg = Config(feeds: """[{"name":"TechBlog","url":"https://feeds.example/rss","category":"Technology"}]""");
+        var handler = new FeedHttpTests.Fake(_ => FeedHttpTests.Ok(Rss));
+        using var m = Monitor(cfg, handler);
+        await m.TickAsync(CancellationToken.None);
+        var items = m.Snapshot().Items;
+        Assert.NotEmpty(items);
+        Assert.All(items, i =>
+        {
+            Assert.Equal("TechBlog", i.Source);
+            Assert.Equal("Technology", i.Category);
+        });
     }
 
     [Fact]
     public void FeedAddressesStayOffThePhone()
     {
-        var cfg = Config(feeds: """[{"name":"Private","url":"https://feeds.example/rss?key=s3cret"}]""");
+        var cfg = Config(feeds: """[{"name":"Private","url":"https://feeds.example/rss?key=s3cret","category":"Personal"}]""");
         var pub = System.Text.Json.JsonSerializer.Serialize(cfg.Get().ToPublic());
         Assert.DoesNotContain("s3cret", pub);
+    }
+
+    [Fact]
+    public void FeedCategoryIsNormalizedInConfig()
+    {
+        var longCat = new string('x', 50);
+        var cfg = Config(feeds: $$"""[{"name":"Blog","url":"https://feeds.example/rss","category":"  {{longCat}}  "}]""");
+        var feed = Assert.Single(cfg.Get().Feeds);
+        Assert.Equal(40, feed.Category.Length);
+        Assert.Equal(new string('x', 40), feed.Category);
     }
 }

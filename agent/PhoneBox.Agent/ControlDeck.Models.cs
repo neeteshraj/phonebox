@@ -13,6 +13,9 @@ public sealed class ControlDeckConfig
     public string? MixerLibrary { get; set; }
     public string? SpotifyClientId { get; set; }
     public string? SpotifyRefreshToken { get; set; }
+    public string? PlexUrl { get; set; }
+    public string? PlexToken { get; set; }
+    public string? PlexPlayerUrl { get; set; } = PlexControl.DefaultPlayerUrl;
 }
 
 /// <summary>Computer-side bindings. Only Id/Label/Kind are sent to a phone.</summary>
@@ -42,13 +45,18 @@ public sealed record DeckLevel(string Kind, string Id, int Volume, bool Muted);
 public sealed record DeckItem(string Id, string Name, string Kind, string? State = null, bool Available = true, string? Rev = null);
 public sealed record DeckDevice(string Id, string Name, string Direction, bool Default, int Volume, bool Muted,
     double Peak, int Channels, bool CanControl = true, IReadOnlyList<int>? ChannelVolumes = null);
-public sealed record DeckSession(string Id, string Name, int Pid, string DeviceId, int Volume, bool Muted, double Peak);
+public sealed record DeckSession(string Id, string Name, int Pid, string DeviceId, int Volume, bool Muted, double Peak,
+    string? ProcessName = null, bool Active = true);
 public sealed record DeckAudio(bool Available, string? Error, IReadOnlyList<DeckDevice> Devices, IReadOnlyList<DeckSession> Sessions,
     IReadOnlyDictionary<string, string>? Defaults = null);
 public sealed record DeckMedia(string Id, string Name, string Title, bool Playing, long Position, long Duration,
     bool CanSeek, bool CanShuffle, bool CanRepeat, bool Shuffle, string Repeat);
 public sealed record DeckMonitor(string Id, string Name, int? Brightness, int Width, int Height, int Hz);
-public sealed record DeckResult(bool Ok, string? Error = null, string? Lease = null);
+/// <summary>A control's answer. <see cref="Mics"/> and <see cref="Camera"/> are set only by "mics-camera-off", so the
+/// phone can say in its own language what happened to each.</summary>
+public sealed record DeckResult(bool Ok, string? Error = null, string? Lease = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? Mics = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? Camera = null);
 public sealed record DeckAudioPacket(int Rate, int Channels, int Bits, string Encoding, string? Data);
 
 internal interface IDeckNative : IDisposable

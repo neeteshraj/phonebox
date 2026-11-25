@@ -122,7 +122,14 @@ public sealed class SessionDetailsTests : IDisposable
     [InlineData("/Users/test/Projects/CodexBar/Sources", false)]
     [InlineData("/Users/test/Projects/ClaudeProbeKit", false)]
     [InlineData("/Users/test/CodexBar/ClaudeProbe/subdir", false)]
-    public void Claude_OnlyTheExactCodexBarProbeDirectoryIsIgnored(string cwd, bool ignored)
+    // claude-mem's background sessions write memory notes from ~/.claude-mem/observer-sessions/<n> (#275)
+    [InlineData("/Users/test/.claude-mem/observer-sessions/108", true)]
+    [InlineData(@"C:\Users\test\.claude-mem\observer-sessions\110\", true)]
+    [InlineData("/home/test/.claude-mem/observer-sessions", true)]
+    [InlineData("/home/test/.claude-mem", false)]
+    [InlineData("/home/test/Projects/claude-mem/observer-sessions", false)]
+    [InlineData("/home/test/Projects/claude-mem", false)]
+    public void Claude_OnlyTheBackgroundToolDirectoriesAreIgnored(string cwd, bool ignored)
     {
         var claudeDir = Path.Combine(_root, ".claude", "sessions");
         Directory.CreateDirectory(claudeDir);
@@ -272,6 +279,244 @@ public sealed class SessionDetailsTests : IDisposable
         Assert.Equal("idle", Assert.Single(monitor.ReadCursor(projects)).Status);
         fi.Refresh();
         Assert.True(monitor.HasCachedCursorRole(file, fi.LastWriteTimeUtc, fi.Length));
+    }
+
+    private string WriteAntigravityTranscript(string id, string lines, bool isCli = false, DateTime? writeUtc = null)
+    {
+        var root = Path.Combine(_root, ".gemini", isCli ? "antigravity-cli" : "antigravity");
+        var logs = Path.Combine(root, "brain", id, ".system_generated", "logs");
+        Directory.CreateDirectory(logs);
+        var file = Path.Combine(logs, "transcript.jsonl");
+        File.WriteAllText(file, lines);
+        if (writeUtc is { } wt) File.SetLastWriteTimeUtc(file, wt);
+        return file;
+    }
+
+    [Fact]
+    public void Antigravity_ConfigDefaultsOff_NormalizedAndHiddenFromToPublic()
+    {
+        var cfg = new AgentConfig();
+        Assert.False(cfg.Antigravity.Sessions);
+        Assert.False(cfg.Antigravity.ShareSessionTitles);
+
+        var path = Path.Combine(_root, "agy-cfg.json");
+        Directory.CreateDirectory(_root);
+        File.WriteAllText(path, """{"antigravity":null}""");
+        var store = new ConfigStore(path);
+        var loaded = store.Get();
+        Assert.NotNull(loaded.Antigravity);
+        Assert.False(loaded.Antigravity.Sessions);
+        Assert.False(loaded.Antigravity.ShareSessionTitles);
+
+        var pubJson = JsonSerializer.Serialize(loaded.ToPublic(), ConfigStore.WriteOpts);
+        using var pubDoc = JsonDocument.Parse(pubJson);
+        Assert.False(pubDoc.RootElement.TryGetProperty("antigravity", out _));
+        Assert.False(pubDoc.RootElement.TryGetProperty("Antigravity", out _));
+    }
+
+    [Fact]
+    public void Antigravity_CompletedTurn_ReportsMetadataWithoutLeakingPromptsOrArgs()
+    {
+        var monitor = new SessionMonitor(NullLogger<SessionMonitor>.Instance);
+        var id = "aaaaaaaa-1111-2222-3333-444444444444";
+        var t0 = DateTimeOffset.UtcNow.AddMinutes(-5).ToString("O");
+        var t1 = DateTimeOffset.UtcNow.AddMinutes(-1).ToString("O");
+        var t2 = DateTimeOffset.UtcNow.AddSeconds(-20).ToString("O");
+        WriteAntigravityTranscript(id,
+            $$$"""{"step_index":0,"source":"USER_EXPLICIT","type":"USER_INPUT","status":"DONE","created_at":"{{{t0}}}","content":"PRIVATE PROMPT"}""" + "\n" +
+            $$$"""{"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","created_at":"{{{t1}}}","model":"gemini-4-carbon-medium","input_tokens":1000,"cache_read_tokens":500,"output_tokens":200,"thinking":"PRIVATE THINKING","tool_calls":[{"name":"run_command","args":{"CommandLine":"SECRET_CMD"}}]}""" + "\n" +
+            $$$"""{"step_index":2,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","created_at":"{{{t2}}}","model":"gemini-4-carbon-medium","input_tokens":250,"cache_read_tokens":1000,"output_tokens":150,"content":"PRIVATE REPLY"}""" + "\n",
+            writeUtc: DateTime.UtcNow.AddSeconds(-20));
+
+        var s = Assert.Single(monitor.ReadAntigravity(_root));
+        Assert.Equal("antigravity:" + id, s.Id);
+        Assert.Equal("antigravity", s.Tool);
+        Assert.Equal("Antigravity", s.Project);
+        Assert.Equal("antigravity-aaaa", s.Name);
+        Assert.Equal("idle", s.Status);
+        Assert.Equal("completed", s.Outcome);
+        Assert.Equal("gemini-4-carbon-medium", s.Model);
+        Assert.Equal("run_command", s.LastTool);
+        Assert.Equal(1250, s.InputTokens);
+        Assert.Equal(350, s.OutputTokens);
+        Assert.Equal(1500, s.CachedInputTokens);
+        Assert.Equal(3100, s.TotalTokens);
+        Assert.Null(s.Title);
+
+        var serialized = JsonSerializer.Serialize(s);
+        Assert.DoesNotContain("PRIVATE", serialized);
+        Assert.DoesNotContain("SECRET_CMD", serialized);
+    }
+
+    [Fact]
+    public void Antigravity_ActiveToolTurnAndStaleInterruptedTurn_TrackBusyVsIdle()
+    {
+        var monitor = new SessionMonitor(NullLogger<SessionMonitor>.Instance);
+        var activeId = "bbbbbbbb-1111-2222-3333-444444444444";
+        var t0 = DateTimeOffset.UtcNow.AddSeconds(-40).ToString("O");
+        var t1 = DateTimeOffset.UtcNow.AddSeconds(-10).ToString("O");
+        WriteAntigravityTranscript(activeId,
+            $$$"""{"step_index":0,"source":"USER_EXPLICIT","type":"USER_INPUT","status":"DONE","created_at":"{{{t0}}}","content":"go"}""" + "\n" +
+            $$$"""{"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","created_at":"{{{t1}}}","tool_calls":[{"name":"read_file","args":{}}]}""" + "\n" +
+            $$$"""{"step_index":2,"source":"MODEL","type":"GENERIC","status":"DONE","created_at":"{{{t1}}}"}""" + "\n",
+            writeUtc: DateTime.UtcNow.AddSeconds(-10));
+
+        var staleId = "cccccccc-1111-2222-3333-444444444444";
+        var staleTs = DateTimeOffset.UtcNow.AddMinutes(-10).ToString("O");
+        WriteAntigravityTranscript(staleId,
+            $$$"""{"step_index":0,"source":"USER_EXPLICIT","type":"USER_INPUT","status":"DONE","created_at":"{{{staleTs}}}","content":"old"}""" + "\n",
+            writeUtc: DateTime.UtcNow.AddMinutes(-10));
+
+        var sessions = monitor.ReadAntigravity(_root).ToList();
+        var active = Assert.Single(sessions, x => x.Id == "antigravity:" + activeId);
+        Assert.Equal("busy", active.Status);
+        Assert.Null(active.Outcome);
+        Assert.NotNull(active.TurnStartedAt);
+        Assert.Equal("read_file", active.LastTool);
+
+        var stale = Assert.Single(sessions, x => x.Id == "antigravity:" + staleId);
+        Assert.Equal("idle", stale.Status);
+        Assert.Null(stale.TurnStartedAt);
+    }
+
+    [Fact]
+    public void Antigravity_ErrorStatusAndErrorMessage_ReportFailedOutcome()
+    {
+        var monitor = new SessionMonitor(NullLogger<SessionMonitor>.Instance);
+        var id1 = "dddddddd-1111-2222-3333-444444444444";
+        var ts = DateTimeOffset.UtcNow.AddSeconds(-20).ToString("O");
+        WriteAntigravityTranscript(id1,
+            $$$"""{"step_index":0,"source":"USER_EXPLICIT","type":"USER_INPUT","status":"DONE","created_at":"{{{ts}}}"}""" + "\n" +
+            $$$"""{"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE","status":"ERROR","created_at":"{{{ts}}}"}""" + "\n",
+            writeUtc: DateTime.UtcNow.AddSeconds(-20));
+
+        var id2 = "eeeeeeee-1111-2222-3333-444444444444";
+        WriteAntigravityTranscript(id2,
+            $$$"""{"step_index":0,"source":"USER_EXPLICIT","type":"USER_INPUT","status":"DONE","created_at":"{{{ts}}}"}""" + "\n" +
+            $$$"""{"step_index":1,"source":"SYSTEM","type":"ERROR_MESSAGE","status":"ERROR","created_at":"{{{ts}}}"}""" + "\n",
+            writeUtc: DateTime.UtcNow.AddSeconds(-15));
+
+        var sessions = monitor.ReadAntigravity(_root).ToList();
+        Assert.Equal("failed", Assert.Single(sessions, x => x.Id == "antigravity:" + id1).Outcome);
+        Assert.Equal("failed", Assert.Single(sessions, x => x.Id == "antigravity:" + id2).Outcome);
+    }
+
+    [Fact]
+    public void Antigravity_BomEmojiTitleAndFailedResponseWithToolCalls()
+    {
+        var monitor = new SessionMonitor(NullLogger<SessionMonitor>.Instance);
+        var id = "44444444-aaaa-bbbb-cccc-dddddddddddd";
+        var t0 = DateTimeOffset.UtcNow.AddMinutes(-2).ToString("O");
+        var t1 = DateTimeOffset.UtcNow.AddSeconds(-10).ToString("O");
+        var file = WriteAntigravityTranscript(id,
+            $$$"""{"step_index":0,"source":"USER_EXPLICIT","type":"USER_INPUT","status":"DONE","created_at":"{{{t0}}}"}""" + "\n" +
+            $$$"""{"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE","status":"ERROR","created_at":"{{{t1}}}","model":"gemini-4-carbon-medium","tool_calls":[{"name":"run_command"}]}""" + "\n");
+        // a transcript that starts with a UTF-8 byte order mark is still read
+        File.WriteAllBytes(file, [0xEF, 0xBB, 0xBF, .. File.ReadAllBytes(file)]);
+        File.SetLastWriteTimeUtc(file, DateTime.UtcNow.AddSeconds(-10));
+        var annDir = Path.Combine(_root, ".gemini", "antigravity", "annotations");
+        Directory.CreateDirectory(annDir);
+        File.WriteAllText(Path.Combine(annDir, id + ".pbtxt"), "title:\"Release \U0001F680 notes\"\n");
+
+        var s = Assert.Single(monitor.ReadAntigravity(_root, titles: true));
+        Assert.Equal("idle", s.Status);       // the failed response ended the turn although it carried a tool call
+        Assert.Equal("failed", s.Outcome);
+        Assert.Equal("run_command", s.LastTool);
+        Assert.Equal("Release \U0001F680 notes", s.Title); // the emoji is a surrogate pair and survives whole
+    }
+
+    [Fact]
+    public void Antigravity_SubagentAndArchivedAreIgnored_QuotedArchivedInTitleIsNotArchived()
+    {
+        var monitor = new SessionMonitor(NullLogger<SessionMonitor>.Instance);
+        var ts = DateTimeOffset.UtcNow.AddSeconds(-15).ToString("O");
+        var subId = "11111111-aaaa-bbbb-cccc-dddddddddddd";
+        WriteAntigravityTranscript(subId,
+            $$$"""{"step_index":0,"source":"SYSTEM","type":"SYSTEM_MESSAGE","status":"DONE","created_at":"{{{ts}}}"}""" + "\n",
+            writeUtc: DateTime.UtcNow.AddSeconds(-15));
+
+        var archId = "22222222-aaaa-bbbb-cccc-dddddddddddd";
+        WriteAntigravityTranscript(archId,
+            $$$"""{"step_index":0,"source":"USER_EXPLICIT","type":"USER_INPUT","status":"DONE","created_at":"{{{ts}}}"}""" + "\n",
+            writeUtc: DateTime.UtcNow.AddSeconds(-15));
+        var annDir = Path.Combine(_root, ".gemini", "antigravity", "annotations");
+        Directory.CreateDirectory(annDir);
+        File.WriteAllText(Path.Combine(annDir, archId + ".pbtxt"), "title:\"Old\" archived:true\n");
+
+        var activeId = "33333333-aaaa-bbbb-cccc-dddddddddddd";
+        WriteAntigravityTranscript(activeId,
+            $$$"""{"step_index":0,"source":"USER_EXPLICIT","type":"USER_INPUT","status":"DONE","created_at":"{{{ts}}}"}""" + "\n",
+            writeUtc: DateTime.UtcNow.AddSeconds(-15));
+        File.WriteAllText(Path.Combine(annDir, activeId + ".pbtxt"),
+            "title:\"why does archived:true fail in \\\"parser\\\"\" last_user_view_time:{seconds:1}\n");
+
+        var s = Assert.Single(monitor.ReadAntigravity(_root, titles: true));
+        Assert.Equal("antigravity:" + activeId, s.Id);
+        Assert.Equal("why does archived:true fail in \"parser\"", s.Title);
+
+        var offMonitor = new SessionMonitor(NullLogger<SessionMonitor>.Instance);
+        var sNoTitle = Assert.Single(offMonitor.ReadAntigravity(_root, titles: false));
+        Assert.Null(sNoTitle.Title);
+    }
+
+    [Fact]
+    public void Antigravity_CliHistoryProjectAndChunkedTranscript_KeepStartAndOmitPartialTokens()
+    {
+        var monitor = new SessionMonitor(NullLogger<SessionMonitor>.Instance);
+        var id = "44444444-aaaa-bbbb-cccc-dddddddddddd";
+        var tStart = DateTimeOffset.UtcNow.AddHours(-1).ToUnixTimeMilliseconds();
+        var tStartIso = DateTimeOffset.FromUnixTimeMilliseconds(tStart).ToString("O");
+        var tNowIso = DateTimeOffset.UtcNow.AddSeconds(-10).ToString("O");
+
+        var file = WriteAntigravityTranscript(id,
+            $$$"""{"step_index":42,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","created_at":"{{{tNowIso}}}","input_tokens":50,"output_tokens":10}""" + "\n",
+            isCli: true, writeUtc: DateTime.UtcNow.AddSeconds(-10));
+        var chunkDir = Path.Combine(Path.GetDirectoryName(file)!, "chunks", "transcript");
+        Directory.CreateDirectory(chunkDir);
+        File.WriteAllText(Path.Combine(chunkDir, "00000000.jsonl"),
+            $$$"""{"step_index":0,"source":"USER_EXPLICIT","type":"USER_INPUT","status":"DONE","created_at":"{{{tStartIso}}}"}""" + "\n");
+
+        var cliRoot = Path.Combine(_root, ".gemini", "antigravity-cli");
+        File.WriteAllText(Path.Combine(cliRoot, "history.jsonl"),
+            $$$"""{"conversationId":"{{{id}}}","display":"PRIVATE DISPLAY TEXT","workspace":"C:\\Users\\test\\Projects\\phonebox"}""" + "\n");
+
+        var s = Assert.Single(monitor.ReadAntigravity(_root));
+        Assert.Equal("phonebox", s.Project);
+        Assert.Equal("phonebox-4444", s.Name);
+        Assert.Equal(tStart, s.StartedAt);
+        Assert.Null(s.TotalTokens);
+        Assert.Null(s.InputTokens);
+        Assert.DoesNotContain("PRIVATE DISPLAY TEXT", JsonSerializer.Serialize(s));
+    }
+
+    [Fact]
+    public void Antigravity_UnchangedTranscript_ReusesCachedDetailsAndUpdatesOnAppend()
+    {
+        var monitor = new SessionMonitor(NullLogger<SessionMonitor>.Instance);
+        var id = "55555555-aaaa-bbbb-cccc-dddddddddddd";
+        var t0 = DateTimeOffset.UtcNow.AddSeconds(-20).ToString("O");
+        var file = WriteAntigravityTranscript(id,
+            $$$"""{"step_index":0,"source":"USER_EXPLICIT","type":"USER_INPUT","status":"DONE","created_at":"{{{t0}}}"}""" + "\n",
+            writeUtc: DateTime.UtcNow.AddSeconds(-20));
+
+        Assert.Equal("busy", Assert.Single(monitor.ReadAntigravity(_root)).Status);
+        var fi = new FileInfo(file);
+        Assert.True(monitor.HasCachedAntigravityDetails(file, fi.LastWriteTimeUtc, fi.Length));
+
+        Assert.Equal("busy", Assert.Single(monitor.ReadAntigravity(_root)).Status);
+        Assert.True(monitor.HasCachedAntigravityDetails(file, fi.LastWriteTimeUtc, fi.Length));
+
+        var t1 = DateTimeOffset.UtcNow.AddSeconds(-5).ToString("O");
+        File.AppendAllText(file,
+            $$$"""{"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","created_at":"{{{t1}}}","input_tokens":100,"output_tokens":20}""" + "\n");
+        File.SetLastWriteTimeUtc(file, DateTime.UtcNow.AddSeconds(-5));
+
+        var updated = Assert.Single(monitor.ReadAntigravity(_root));
+        Assert.Equal("idle", updated.Status);
+        Assert.Equal("completed", updated.Outcome);
+        Assert.Equal(120, updated.TotalTokens);
+        fi.Refresh();
+        Assert.True(monitor.HasCachedAntigravityDetails(file, fi.LastWriteTimeUtc, fi.Length));
     }
     public void Dispose() { if (Directory.Exists(_root)) Directory.Delete(_root, true); }
 }

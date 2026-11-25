@@ -29,6 +29,27 @@ async function saveWithFailedRequest(page, status) {
   }, status);
 }
 
+test('a hook button asks to save first while the settings have unsaved changes', async ({ page }) => {
+  await page.goto('/settings/#general');
+  const wsl = page.locator('[data-bind="cursor.watchWsl"]');
+  await expect(wsl).toBeAttached();
+  await wsl.evaluate(input => { input.checked = !input.checked; input.dispatchEvent(new Event('change', { bubbles: true })); });
+  await expect(page.locator('#save')).toBeEnabled();
+  const sent = await page.evaluate(async () => {
+    const original = window.fetch, requests = [];
+    window.fetch = (url, options) => {
+      if (/\/api\/(cursor|claude|codex)\/hook$/.test(String(url))) { requests.push(`${options?.method || 'GET'} ${url}`); return Promise.resolve(Response.json({})); }
+      return original(url, options);
+    };
+    try {
+      for (const name of ['cursor', 'claude', 'codex']) await document.getElementById(`${name}HookBtn`).onclick();
+    } finally { window.fetch = original; }
+    return requests;
+  });
+  expect(sent, 'the agent would install with the saved "Also watch Cursor in WSL", not the one on the page').toEqual([]);
+  await expect(page.locator('#toast')).toHaveText('Save your changes first');
+});
+
 test('a settings transport failure reports the error and keeps the draft', async ({ page }) => {
   const draft = await editTheme(page);
   const conflict = await saveWithFailedRequest(page, 409);
@@ -115,4 +136,46 @@ test('a section introduction is measured again after the language changes', asyn
   await page.evaluate(() => applyLanguageUi('en'));
   await expect(lead).toHaveClass(/\blong\b/);
   await expect(lead).toHaveAttribute('role', 'button');
+});
+
+// An option that does nothing while another is off is not offered: the Trackpad's scroll ticks follow its haptic feedback.
+test('a widget option that needs another is shown only while that one is on', async ({ page }) => {
+  await page.goto('/settings/#pages');
+  await page.waitForFunction(() => cfg && cfg.pages); // the settings are loaded
+  await page.evaluate(() => {
+    const p = curPage();
+    p.widgets.push({ id: 'tp-test', type: 'trackpad', x: 0, y: 0, w: 6, h: 6, options: { control: true } });
+    selWidget = p.widgets.length - 1;
+    renderInspector();
+  });
+  const inspector = page.locator('#inspector');
+  const ticks = inspector.getByText('Tick while scrolling');
+  const haptics = inspector.locator('.field', { hasText: 'Haptic feedback' }).locator('select');
+  // the Trackpad's options come in groups, each under its own heading, with the switch that allows control first
+  await expect(inspector.locator('h4.opt-section')).toHaveText(['Pointer', 'Scrolling', 'Haptics']);
+  expect(await inspector.locator('h4.opt-section, .field label, label.check').allTextContents().then((t) => t.slice(0, 5).map((x) => x.trim())))
+    .toEqual(['Allow controlling the mouse from the phone', 'Pointer', 'Pointer sensitivity', 'Pointer acceleration', 'Drag hold duration (ms)']);
+  await expect(haptics).toHaveValue('normal');
+  await expect(ticks).toBeVisible();
+  await haptics.selectOption('off');
+  await expect(ticks).toHaveCount(0);
+  await haptics.selectOption('light');
+  await expect(ticks).toBeVisible();
+});
+
+// The Smart Stack's own settings for a card draw the same groups and hide the same options as the widget's.
+test('the settings of a Trackpad inside a Smart Stack have its groups and hide the scroll tick with haptics off', async ({ page }) => {
+  await page.goto('/settings/#pages');
+  await page.waitForFunction(() => cfg && cfg.pages);
+  await page.evaluate(() => {
+    const p = curPage();
+    p.widgets.push({ id: 'stack-test', type: 'stack', x: 0, y: 0, w: 6, h: 6, options: { widgets: [{ type: 'trackpad', options: { control: true, haptics: 'off' } }] } });
+    selWidget = p.widgets.length - 1;
+    activeStackSubIdx = 0;
+    renderInspector();
+  });
+  const config = page.locator('#inspector .stack-sub-config');
+  await expect(config.locator('h4.opt-section')).toHaveText(['Pointer', 'Scrolling', 'Haptics']);
+  await expect(config.getByText('Haptic feedback')).toBeVisible();
+  await expect(config.getByText('Tick while scrolling')).toHaveCount(0);
 });

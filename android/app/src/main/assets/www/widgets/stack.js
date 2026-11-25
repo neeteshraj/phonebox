@@ -1,4 +1,4 @@
-import { h, haptic, t } from '../main.js';
+import { h, haptic, t, tp } from '../main.js';
 import { W } from '../registry.js';
 
 function parseWidgets(raw) {
@@ -196,7 +196,7 @@ W.stack = {
       });
       pauseBtn = h('button', 'stack-pause');
       pauseBtn.type = 'button';
-      pauseBtn.setAttribute('aria-label', 'Pause stack rotation');
+      pauseBtn.setAttribute('aria-label', tp('Pause stack rotation'));
       pauseBtn.innerHTML =
         '<svg class="i-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg>' +
         '<svg class="i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>';

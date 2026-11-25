@@ -6,14 +6,20 @@ namespace PhoneBox.Agent;
 /// Sends key combinations and text to the computer for shortcut keys and macros: "ctrl+shift+m", "win+d", "f13",
 /// "playpause"; several combos separated by commas are pressed one after another.
 ///  - Windows: SendInput.
-///  - Linux: xdotool (X11) or wtype (Wayland).
-///  - macOS: System Events via osascript (needs the Accessibility permission for the agent).
+///  - Linux: xdotool (X11), or wtype then ydotool (Wayland; GNOME needs ydotool), xdotool only when neither is installed.
+///  - macOS: System Events via osascript (needs the Accessibility permission for the agent). The mouse (Trackpad
+///    widget) is Quartz events, see Unix/MacMouse.cs.
 /// </summary>
 public static class KeySender
 {
-    /// <summary>What to do when macOS refuses to send keys. Fixed text, so the phone may show it as it is.</summary>
+    /// <summary>
+    /// What to do when macOS refuses to send keys. Fixed text, so the phone may show it as it is. An entry granted to an
+    /// older, differently signed build (ad hoc before 0.9.22) stays in the list, even switched on, but no longer applies:
+    /// only removing it and adding the agent again helps (#269).
+    /// </summary>
     internal const string AccessibilityHint =
-        "macOS refused: allow PhoneBoxAgent in System Settings › Privacy & Security › Accessibility";
+        "macOS refused: allow PhoneBoxAgent in System Settings › Privacy & Security › Accessibility. " +
+        "If it is already listed, remove it there with − and add it again";
 
     internal record struct MouseCall(string Action, int Dx, int Dy, int Delta);
     internal static Action<MouseCall>? TestMouseSink;
@@ -36,7 +42,7 @@ public static class KeySender
         return combos;
     }
 
-    private static string Normalize(string k) => k.ToLowerInvariant() switch
+    private static string Normalize(string k) => Numpad(k.ToLowerInvariant()) ?? k.ToLowerInvariant() switch
     {
         "control" or "ctl" => "ctrl",
         "cmd" or "command" or "super" or "meta" or "windows" or "⌘" => "win",
@@ -58,6 +64,29 @@ public static class KeySender
         var x => x,
     };
 
+    // The keypad, under the names other tools use: numpad3, num3, kp3, KP_3 (xdotool), numpad_3; numpadadd, kpplus,
+    // KP_Add... "numpad+" cannot be written, as + joins the keys of a combo (#270).
+    private static readonly string[] NumpadPrefixes = ["numpad_", "numpad", "num_", "num", "kp_", "kp"];
+
+    private static string? Numpad(string k)
+    {
+        var prefix = NumpadPrefixes.FirstOrDefault(k.StartsWith);
+        if (prefix is null) return null;
+        var rest = k[prefix.Length..];
+        var name = rest switch
+        {
+            [var d] when char.IsAsciiDigit(d) => rest,
+            "enter" or "return" => "enter",
+            "add" or "plus" => "add",
+            "subtract" or "sub" or "minus" => "subtract",
+            "multiply" or "mul" or "times" or "*" => "multiply",
+            "divide" or "div" or "slash" or "/" => "divide",
+            "decimal" or "dec" or "period" or "dot" or "." or "comma" or "separator" => "decimal",
+            _ => null,
+        };
+        return name is null ? null : "numpad" + name;
+    }
+
     private static bool IsKnown(string k) =>
         (k.Length == 1 && char.IsAsciiLetterOrDigit(k[0])) || Special.ContainsKey(k) || (k.Length is 2 or 3 && k[0] == 'f' && int.TryParse(k[1..], out var n) && n is >= 1 and <= 24);
 
@@ -73,7 +102,21 @@ public static class KeySender
         ["bracketleft"] = (0xDB, "bracketleft", 33), ["bracketright"] = (0xDD, "bracketright", 30),
         ["playpause"] = (0xB3, "XF86AudioPlay", -1), ["nexttrack"] = (0xB0, "XF86AudioNext", -1), ["prevtrack"] = (0xB1, "XF86AudioPrev", -1),
         ["mute"] = (0xAD, "XF86AudioMute", -1), ["volumeup"] = (0xAF, "XF86AudioRaiseVolume", -1), ["volumedown"] = (0xAE, "XF86AudioLowerVolume", -1),
+        // the keypad (#270): its own keys, not the number row, so a shortcut bound to Numpad3 (Discord, games) is matched
+        ["numpad0"] = (0x60, "KP_0", 82), ["numpad1"] = (0x61, "KP_1", 83), ["numpad2"] = (0x62, "KP_2", 84), ["numpad3"] = (0x63, "KP_3", 85),
+        ["numpad4"] = (0x64, "KP_4", 86), ["numpad5"] = (0x65, "KP_5", 87), ["numpad6"] = (0x66, "KP_6", 88), ["numpad7"] = (0x67, "KP_7", 89),
+        ["numpad8"] = (0x68, "KP_8", 91), ["numpad9"] = (0x69, "KP_9", 92),
+        ["numpadmultiply"] = (0x6A, "KP_Multiply", 67), ["numpadadd"] = (0x6B, "KP_Add", 69), ["numpadsubtract"] = (0x6D, "KP_Subtract", 78),
+        ["numpaddecimal"] = (0x6E, "KP_Decimal", 65), ["numpaddivide"] = (0x6F, "KP_Divide", 75),
+        // Windows has no key code of its own for the keypad's Enter: it is VK_RETURN with the extended flag (WinExtended)
+        ["numpadenter"] = (0x0D, "KP_Enter", 76),
     };
+
+    /// <summary>
+    /// Keys that Windows tells apart from another key only by the "extended" flag: the keypad's Enter (VK_RETURN, like the
+    /// main Enter) and its / (whose scan code is the main / key's).
+    /// </summary>
+    internal static bool WinExtended(string k) => k is "numpadenter" or "numpaddivide";
 
     public static void SendKeys(string spec)
     {
@@ -110,10 +153,10 @@ public static class KeySender
     /// <summary>Presses one parsed combo; false when Windows took none or only part of the input.</summary>
     public static bool SendCombo(List<string> combo)
     {
-        var vks = combo.Select(WinVk).ToList();
+        var keys = combo.Select(k => (Vk: WinVk(k), Extended: WinExtended(k))).ToList();
         var inputs = new List<INPUT>();
-        foreach (var vk in vks) inputs.Add(Key(vk, false));
-        foreach (var vk in Enumerable.Reverse(vks)) inputs.Add(Key(vk, true));
+        foreach (var (vk, ext) in keys) inputs.Add(Key(vk, false, ext));
+        foreach (var (vk, ext) in Enumerable.Reverse(keys)) inputs.Add(Key(vk, true, ext));
         return SendInput((uint)inputs.Count, inputs.ToArray(), Marshal.SizeOf<INPUT>()) == inputs.Count;
     }
 
@@ -135,13 +178,13 @@ public static class KeySender
     // arrows, Home/End, Insert/Delete, PageUp/PageDown and the right-hand keys need the "extended" flag
     private static bool Extended(byte vk) => vk is >= 0x21 and <= 0x2E or 0x5B;
 
-    private static INPUT Key(byte vk, bool up)
+    private static INPUT Key(byte vk, bool up, bool forceExtended = false)
     {
         // the scan code too: raw-input apps tell keys apart (and left from right) by it, and 0 is no key at all.
         // MAPVK_VK_TO_VSC_EX marks the media keys with E0; the arrows and the Home/End block share their codes with
         // the keypad, so they still come from the list above.
         var sc = MapVirtualKeyW(vk, 4);
-        var extended = Extended(vk) || (sc >> 8) is 0xE0 or 0xE1;
+        var extended = forceExtended || Extended(vk) || (sc >> 8) is 0xE0 or 0xE1;
         return new()
         {
             type = 1,
@@ -227,14 +270,17 @@ public static class KeySender
         INPUT[] inputs = [MouseInput(0, 0, 0, MOUSEEVENTF_LEFTUP)];
         SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
     }
+    /// <summary>The Trackpad widget's multi-finger gestures are a macOS feature; elsewhere they are ignored.</summary>
+    public static bool MouseGesture(string type, Action<Exception>? onFailure = null)
+    {
+        if (TestMouseSink is not null) { TestMouseSink(new MouseCall(type, 0, 0, 0)); return true; }
+        return false;
+    }
 #else
-    /// <summary>Presses one parsed combo; false when xdotool or wtype failed (macOS throws when it refuses).</summary>
-    public static bool SendCombo(List<string> combo) => Send(combo);
-
-    private static bool Send(List<string> combo)
+    /// <summary>Presses one parsed combo; false when xdotool, wtype or ydotool failed (macOS throws when it refuses).</summary>
+    public static bool SendCombo(List<string> combo)
     {
         if (OperatingSystem.IsMacOS()) { MacKeystroke(combo); return true; }
-        // X11: xdotool; Wayland: wtype
         var x = string.Join("+", combo.Select(k => k switch
         {
             "win" => "super", "ctrl" or "shift" or "alt" => k,
@@ -242,49 +288,141 @@ public static class KeySender
             _ when k[0] == 'f' && k.Length > 1 => k.ToUpperInvariant(),
             _ => k,
         }));
-        if (Sh.Which("xdotool") is not null && Environment.GetEnvironmentVariable("WAYLAND_DISPLAY") is null) return Sh.Run("xdotool", "key", "--clearmodifiers", x) is not null;
-        if (Sh.Which("wtype") is not null)
-        {
-            var args = new List<string>();
-            var mods = combo.Where(Modifiers.Contains).Select(m => m == "win" ? "logo" : m).ToList();
-            foreach (var m in mods) args.AddRange(["-M", m]);
-            var key = combo.FirstOrDefault(k => !Modifiers.Contains(k));
-            if (key is not null) args.AddRange(["-k", Special.TryGetValue(key, out var s) ? s.X : key]);
-            foreach (var m in Enumerable.Reverse(mods)) args.AddRange(["-m", m]);
-            return Sh.Run("wtype", [.. args]) is not null;
-        }
-        if (Sh.Which("xdotool") is not null) return Sh.Run("xdotool", "key", "--clearmodifiers", x) is not null;
-        throw new InvalidOperationException("sending keys needs xdotool (X11) or wtype (Wayland)");
+        ToolRun Run(string tool, params string[] args) => RunTool(tool, args, TimeSpan.FromSeconds(2), CancellationToken.None).Run;
+        if (!OnWayland() && FindTool("xdotool") is not null) return Run("xdotool", "key", "--clearmodifiers", x) == ToolRun.Ok;
+        var y = YdotoolCombo(combo);
+        return RunOnWayland(() => Run("wtype", WtypeArgs(combo)), y is null ? null : () => Run("ydotool", "key", y),
+            () => Run("xdotool", "key", "--clearmodifiers", x), "sending keys",
+            "ydotool can't press media keys, F13-F24 or keypad keys");
     }
 
-    public static void TypeText(string text) => TryTypeText(text, CancellationToken.None);
+    private static void Send(List<string> combo)
+    {
+        if (!SendCombo(combo)) throw new InvalidOperationException("the computer refused the key press");
+    }
+
+    internal enum ToolRun { Ok, Failed, TimedOut, Missing }
+
+    // Seams for the tests of which tool runs and in what order
+    internal static Func<string, string?> FindTool = Sh.Which;
+    internal static Func<bool> OnWayland = () => Environment.GetEnvironmentVariable("WAYLAND_DISPLAY") is not null;
+    internal static Func<string, string[], TimeSpan, CancellationToken, (ToolRun Run, string Output)> RunTool = RunProcess;
+
+    private static (ToolRun, string) RunProcess(string tool, string[] args, TimeSpan timeout, CancellationToken ct)
+    {
+        if (FindTool(tool) is not { } path) return (ToolRun.Missing, "");
+        var psi = new System.Diagnostics.ProcessStartInfo(path);
+        foreach (var a in args) psi.ArgumentList.Add(a);
+        try
+        {
+            var r = Task.Run(() => ToolProcess.RunAsync(psi, timeout, ct)).GetAwaiter().GetResult();
+            return (r.ExitCode == 0 ? ToolRun.Ok : ToolRun.Failed, r.Output + r.Error);
+        }
+        catch (TimeoutException) { return (ToolRun.TimedOut, ""); }
+        catch (Exception e) when (e is IOException or System.ComponentModel.Win32Exception) { return (ToolRun.Failed, ""); }
+    }
+
+    /// <summary>
+    /// Wayland (or X11 without xdotool): wtype (wlroots, KDE), then ydotool (GNOME, which has neither wtype's protocol
+    /// nor a way for xdotool in). A tool that timed out may have typed already, so nothing runs after it. xdotool runs
+    /// only when neither wtype nor ydotool is installed: on GNOME it exits 0 having typed nothing.
+    /// <paramref name="ydotool"/> is null when ydotool can't do this input, <paramref name="ydotoolCannot"/> says why.
+    /// </summary>
+    private static bool RunOnWayland(Func<ToolRun> wtype, Func<ToolRun>? ydotool, Func<ToolRun> xdotool, string what, string ydotoolCannot)
+    {
+        var hasWtype = FindTool("wtype") is not null;
+        var hasYdotool = FindTool("ydotool") is not null;
+        if (hasWtype)
+        {
+            var w = wtype();
+            if (w == ToolRun.Ok) return true;
+            if (w == ToolRun.TimedOut || !hasYdotool) return false;
+        }
+        if (hasYdotool)
+        {
+            if (!YdotoolUsable()) throw new InvalidOperationException(YdotoolUnusable);
+            if (ydotool is null) throw new InvalidOperationException(ydotoolCannot);
+            return ydotool() == ToolRun.Ok;
+        }
+        if (FindTool("xdotool") is not null) return xdotool() == ToolRun.Ok;
+        throw new InvalidOperationException(what + " needs xdotool (X11), or wtype or ydotool (Wayland)");
+    }
+
+    private const string YdotoolUnusable = "ydotool doesn't work here: PhoneBox uses ydotool 0.1.x, with write access to /dev/uinput";
+
+    // ydotool sends key positions of a US keyboard: on other layouts some keys differ (AZERTY a/q; UK @ " # ~ \ |).
+    // Keys are not mapped through the active layout; letters and digits match on QWERTY layouts such as US and UK.
+    // shortcut: only ydotool 0.1.x (Ubuntu 24.04, tested) is used. 1.x takes numeric key codes and reads escapes in
+    // text, so it is skipped until someone can test it; its "type --help" is the one that lists --escape.
+    internal static bool YdotoolOk;
+
+    private static bool YdotoolUsable()
+    {
+        if (YdotoolOk) return true;
+        var (_, help) = RunTool("ydotool", ["type", "--help"], TimeSpan.FromSeconds(3), CancellationToken.None);
+        // only a yes is kept: right after login /dev/uinput may not be ready yet
+        return YdotoolOk = help.Contains("--key-delay") && !help.Contains("--escape");
+    }
+
+    /// <summary>ydotool 0.1.x types only these: it stops at any other character and still exits 0.</summary>
+    internal static bool YdotoolCanType(string text) => text.All(c => c is '\n' or '\t' or (>= ' ' and <= '~'));
+
+    private static string[] WtypeArgs(List<string> combo)
+    {
+        var args = new List<string>();
+        var mods = combo.Where(Modifiers.Contains).Select(m => m == "win" ? "logo" : m).ToList();
+        foreach (var m in mods) args.AddRange(["-M", m]);
+        var key = combo.FirstOrDefault(k => !Modifiers.Contains(k));
+        if (key is not null) args.AddRange(["-k", Special.TryGetValue(key, out var s) ? s.X : key]);
+        foreach (var m in Enumerable.Reverse(mods)) args.AddRange(["-m", m]);
+        return [.. args];
+    }
+
+    /// <summary>
+    /// A combo in ydotool 0.1.x's key names ("ctrl+c"), or null when it has no name for one of the keys. ydotool 0.1.x
+    /// reads a name it does not know as its first letter and exits 0, so a wrong name would press the wrong key.
+    /// </summary>
+    internal static string? YdotoolCombo(List<string> combo)
+    {
+        var names = combo.Select(k => k switch
+        {
+            "ctrl" or "shift" or "alt" => k, "win" => "super",
+            "enter" or "tab" or "esc" or "backspace" or "delete" or "insert" or "home" or "end" or "pageup" or "pagedown"
+                or "up" or "down" or "left" or "right" => k,
+            "printscreen" => "sysrq",
+            "space" => " ", "minus" => "-", "equals" => "=", "comma" => ",", "period" => ".", "slash" => "/", "semicolon" => ";",
+            "bracketleft" => "[", "bracketright" => "]",
+            _ when k.Length == 1 && char.IsAsciiLetterOrDigit(k[0]) => k,
+            _ when k[0] == 'f' && int.TryParse(k[1..], out var n) && n is >= 1 and <= 12 => k,
+            _ => null, // media keys, F13-F24 and the keypad have no name in 0.1.x
+        }).ToList();
+        return names.Contains(null) ? null : string.Join("+", names);
+    }
+
+    public static void TypeText(string text)
+    {
+        if (!TryTypeText(text, CancellationToken.None)) throw new InvalidOperationException("the computer refused the typing");
+    }
 
     /// <summary>
     /// Types the text; false when the tool failed (macOS throws when it refuses). The tool gets time for the whole text
-    /// (xdotool types a character every 8 ms) and is killed when <paramref name="ct"/> is cancelled.
+    /// (xdotool types a character every 8 ms, ydotool 0.1.x every 12 ms) and is killed when <paramref name="ct"/> is cancelled.
     /// </summary>
     public static bool TryTypeText(string text, CancellationToken ct)
     {
         var timeout = TimeSpan.FromMilliseconds(3000 + 20L * text.Length);
-        bool Run(string tool, params string[] args)
-        {
-            var path = Sh.Which(tool);
-            if (path is null) return false;
-            var psi = new System.Diagnostics.ProcessStartInfo(path);
-            foreach (var a in args) psi.ArgumentList.Add(a);
-            try { return ToolProcess.RunAsync(psi, timeout, ct).GetAwaiter().GetResult().ExitCode == 0; }
-            catch (TimeoutException) { return false; }
-        }
+        ToolRun Run(string tool, params string[] args) => RunTool(tool, args, timeout, ct).Run;
         if (OperatingSystem.IsMacOS())
         {
-            if (!Run("osascript", "-e", $"tell application \"System Events\" to keystroke \"{text.Replace("\\", "\\\\").Replace("\"", "\\\"")}\""))
+            if (Run("osascript", "-e", $"tell application \"System Events\" to keystroke \"{text.Replace("\\", "\\\\").Replace("\"", "\\\"")}\"") != ToolRun.Ok)
                 throw new InvalidOperationException(AccessibilityHint);
             return true;
         }
-        if (Sh.Which("xdotool") is not null && Environment.GetEnvironmentVariable("WAYLAND_DISPLAY") is null) return Run("xdotool", "type", "--delay", "8", "--", text);
-        if (Sh.Which("wtype") is not null) return Run("wtype", "--", text);
-        if (Sh.Which("xdotool") is not null) return Run("xdotool", "type", "--delay", "8", "--", text);
-        throw new InvalidOperationException("typing needs xdotool (X11) or wtype (Wayland)");
+        if (!OnWayland() && FindTool("xdotool") is not null) return Run("xdotool", "type", "--delay", "8", "--", text) == ToolRun.Ok;
+        var lf = text.Replace("\r\n", "\n"); // clipboard text can have Windows line endings, and ydotool can't type \r
+        return RunOnWayland(() => Run("wtype", "--", text), YdotoolCanType(lf) ? () => Run("ydotool", "type", "--", lf) : null,
+            () => Run("xdotool", "type", "--delay", "8", "--", text), "typing",
+            "ydotool types only ASCII: letters, digits, punctuation, tab and new lines");
     }
 
     private static void MacKeystroke(List<string> combo)
@@ -310,6 +448,13 @@ public static class KeySender
     internal static int? MacKeyCode(string k) =>
         Special.TryGetValue(k, out var s) ? (s.Mac >= 0 ? s.Mac : null)
         : k.Length is 2 or 3 && k[0] == 'f' && int.TryParse(k[1..], out var n) && n is >= 1 and <= 20 ? MacF(n) : null;
+
+    /// <summary>Presses a key by its macOS key code, with modifiers named the way System Events does ("control down").</summary>
+    internal static void MacKeyCode(int code, IReadOnlyList<string> modifiers)
+    {
+        var using_ = modifiers.Count > 0 ? $" using {{{string.Join(", ", modifiers)}}}" : "";
+        Osa($"tell application \"System Events\" to key code {code}{using_}");
+    }
 
     private static int MacF(int n) => n switch
     {
@@ -460,5 +605,19 @@ public static class KeySender
         if (Mac(() => MacSystem.ButtonHere(0, false))) return;
         UnixAction("mouseup", "1");
     }
+    /// <summary>
+    /// A three- or four-finger swipe, or a spread or pinch, from the Trackpad widget. Only macOS has these gestures,
+    /// and what they do follows the Mac's own Trackpad settings (see Unix/MacGestures.cs). The action starts in the
+    /// background: it can take a moment and the phone's next movement should not wait for it.
+    /// </summary>
+    public static bool MouseGesture(string type, Action<Exception>? onFailure = null)
+    {
+        if (TestMouseSink is not null) { TestMouseSink(new MouseCall(type, 0, 0, 0)); return true; }
+        if (!OperatingSystem.IsMacOS() || !MacGestures.IsGesture(type)) return false;
+        // a gesture that macOS refuses (no Accessibility permission, say) is reported to the caller, which has the logger
+        Task.Run(() => { try { MacGestures.Run(type); } catch (Exception ex) { onFailure?.Invoke(ex); } });
+        return true;
+    }
+
 #endif
 }

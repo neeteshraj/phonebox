@@ -8,6 +8,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.res.Configuration
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.hardware.Sensor
@@ -22,12 +23,16 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.text.format.DateFormat
 import android.util.Log
+import android.view.Gravity
+import android.view.InputDevice
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.view.WindowManager
+import android.widget.TextView
 import android.widget.Toast
 import android.webkit.JavascriptInterface
 import android.webkit.ConsoleMessage
@@ -40,7 +45,9 @@ import android.webkit.WebViewClient
 import androidx.webkit.WebViewAssetLoader
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import org.json.JSONArray
 import org.json.JSONObject
+import java.util.Locale
 
 /**
  * Full-screen desk panel. The UI is plain HTML/JS bundled in assets/www.
@@ -51,6 +58,17 @@ import org.json.JSONObject
 class MainActivity : Activity(), SensorEventListener {
 
     private lateinit var web: WebView
+    /** False when Android could not start its WebView (#385): the activity then only shows why. */
+    private val hasWeb get() = ::web.isInitialized
+    private val panelLanguageTag = Regex("auto|[a-z]{2}(-[A-Za-z]{2,4})?")
+    private val panelPreferences by lazy { getSharedPreferences("panel-ui", MODE_PRIVATE) }
+
+    private fun pairingContext(): Context {
+        val tag = panelPreferences.getString("language", null) ?: return this
+        return createConfigurationContext(Configuration(resources.configuration).apply {
+            setLocale(Locale.forLanguageTag(tag))
+        })
+    }
     // Set first in onDestroy: dictation and stream callbacks already queued on the UI thread then skip the destroyed WebView.
     private var destroyed = false
     private val dictation by lazy { Dictation(this) { script -> if (!destroyed) web.evaluateJavascript(script, null) } }
@@ -83,7 +101,20 @@ class MainActivity : Activity(), SensorEventListener {
             runOnUiThread { if (!destroyed) web.evaluateJavascript(js, null) }
         }
 
-        web = WebView(this)
+        web = try { WebView(this) } catch (e: Exception) {
+            // Some Android 5.1 vendor systems cannot start any WebView update ("Invalid reflection", #385): say so
+            // instead of crashing at every launch.
+            Log.e("PhoneBox", "WebView failed to start", e)
+            setContentView(TextView(this).apply {
+                text = getString(R.string.webview_failed)
+                setTextColor(0xFFFFFFFF.toInt())
+                setBackgroundColor(0xFF000000.toInt())
+                textSize = 20f
+                gravity = Gravity.CENTER
+                setPadding(48, 48, 48, 48)
+            })
+            return
+        }
         web.setBackgroundColor(0xFF000000.toInt())
         setContentView(web)
 
@@ -120,7 +151,7 @@ class MainActivity : Activity(), SensorEventListener {
             override fun onPageFinished(view: WebView, url: String?) = giveKey(view, url)
         }
         if (documentStartKey)
-            WebViewCompat.addDocumentStartJavaScript(web, "window.__phoneboxKey='$bridgeKey';", setOf("https://$ASSET_HOST"))
+            WebViewCompat.addDocumentStartJavaScript(web, panelBootstrap(), setOf("https://$ASSET_HOST"))
         web.addJavascriptInterface(Bridge(), "Android")
         // Lets you debug the panel from the computer via chrome://inspect.
         WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG)
@@ -140,33 +171,35 @@ class MainActivity : Activity(), SensorEventListener {
     private fun handlePairingLink(intent: Intent?) {
         val pairing = AgentLink.PairLink.parse(intent?.data) ?: return
         intent?.data = null // not again after a configuration change
+        val context = pairingContext()
         AlertDialog.Builder(this)
-            .setTitle(getString(R.string.pair_title))
-            .setMessage(getString(R.string.pair_message, pairing.pc, pairing.hosts.joinToString(), pairing.port, pairing.check))
-            .setPositiveButton(getString(R.string.pair_positive)) { _, _ -> pair(pairing) }
-            .setNegativeButton(getString(R.string.pair_negative), null)
+            .setTitle(context.getString(R.string.pair_title))
+            .setMessage(context.getString(R.string.pair_message, pairing.pc, pairing.hosts.joinToString(), pairing.port, pairing.check))
+            .setPositiveButton(context.getString(R.string.pair_positive)) { _, _ -> pair(pairing, context) }
+            .setNegativeButton(context.getString(R.string.pair_negative), null)
             .setOnDismissListener { hideSystemUi() }
             .show()
-            .plainButtons()
+            .pairingButtons(context)
     }
 
     /** Dialog buttons as written: the default all-caps follows the phone's language ("PAİR" on a Turkish phone). */
-    private fun AlertDialog.plainButtons(): AlertDialog = apply {
+    private fun AlertDialog.pairingButtons(context: Context): AlertDialog = apply {
+        window?.decorView?.layoutDirection = context.resources.configuration.layoutDirection
         listOf(AlertDialog.BUTTON_POSITIVE, AlertDialog.BUTTON_NEGATIVE).forEach { getButton(it)?.isAllCaps = false }
     }
 
-    private fun pair(pairing: AgentLink.PairLink) {
-        Toast.makeText(this, getString(R.string.pair_progress, pairing.pc), Toast.LENGTH_SHORT).show()
+    private fun pair(pairing: AgentLink.PairLink, context: Context) {
+        Toast.makeText(context, context.getString(R.string.pair_progress, pairing.pc), Toast.LENGTH_SHORT).show()
         Thread {
             val problem = link.claim(pairing)
             runOnUiThread {
                 if (isFinishing || isDestroyed) return@runOnUiThread // the pairing is stored; there is no window to show it in
                 if (problem == null) {
-                    Toast.makeText(this, getString(R.string.pair_done, pairing.pc), Toast.LENGTH_LONG).show()
-                    stream.stop(); if (resumed) stream.start(); web.reload()
+                    Toast.makeText(context, context.getString(R.string.pair_done, pairing.pc), Toast.LENGTH_LONG).show()
+                    stream.stop(); if (resumed) stream.start(); if (hasWeb) web.reload()
                 } else {
-                    AlertDialog.Builder(this).setTitle(getString(R.string.pair_failed_title)).setMessage(problem.message(this))
-                        .setPositiveButton(getString(R.string.ok), null).setOnDismissListener { hideSystemUi() }.show().plainButtons()
+                    AlertDialog.Builder(this).setTitle(context.getString(R.string.pair_failed_title)).setMessage(problem.message(context))
+                        .setPositiveButton(context.getString(R.string.ok), null).setOnDismissListener { hideSystemUi() }.show().pairingButtons(context)
                 }
             }
         }.start()
@@ -213,6 +246,63 @@ class MainActivity : Activity(), SensorEventListener {
         }
     }
 
+    /**
+     * The panel is made for touch, so a press of the main mouse button is handed to the page as a finger: a click taps,
+     * a drag swipes between pages, a long press holds. A mouse shared from the computer (Input Leaf, Deskflow) sends its
+     * presses as ACTION_DOWN / ACTION_UP only, without the ACTION_BUTTON_PRESS / RELEASE the WebView makes mouse clicks
+     * from, so the page saw nothing at all (#425). The right and middle buttons, hovering and the wheel stay mouse events.
+     */
+    private var mouseAsFinger = false
+
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        if (Build.VERSION.SDK_INT < 23 || event.getToolType(0) != MotionEvent.TOOL_TYPE_MOUSE)
+            return super.dispatchTouchEvent(event)
+        if (event.actionMasked == MotionEvent.ACTION_DOWN)
+            mouseAsFinger = event.buttonState and (MotionEvent.BUTTON_SECONDARY or MotionEvent.BUTTON_TERTIARY) == 0
+        if (!mouseAsFinger) return super.dispatchTouchEvent(event)
+        try {
+            return sendAsFinger(event, event.action)
+        } finally {
+            if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) mouseAsFinger = false
+        }
+    }
+
+    /** The mouse event as a finger on the touch screen, with [action], handed to the page. */
+    private fun sendAsFinger(event: MotionEvent, action: Int): Boolean {
+        val n = event.pointerCount
+        val props = Array(n) { i ->
+            MotionEvent.PointerProperties().also { event.getPointerProperties(i, it); it.toolType = MotionEvent.TOOL_TYPE_FINGER }
+        }
+        val coords = Array(n) { i -> MotionEvent.PointerCoords().also { event.getPointerCoords(i, it) } }
+        val finger = MotionEvent.obtain(event.downTime, event.eventTime, action, n, props, coords, event.metaState, 0,
+            event.xPrecision, event.yPrecision, event.deviceId, event.edgeFlags, InputDevice.SOURCE_TOUCHSCREEN, event.flags)
+        try {
+            return super.dispatchTouchEvent(finger)
+        } finally {
+            finger.recycle()
+        }
+    }
+
+    /**
+     * A real mouse also reports its main button as ACTION_BUTTON_PRESS / RELEASE. While its press goes in as a finger
+     * (above), those are dropped; released while another button is still held, the finger is lifted there, since no
+     * ACTION_UP comes until every button is up. A main button pressed while another one was already held was not
+     * turned into a finger, so its button events go to the page as they are.
+     */
+    override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
+        if (Build.VERSION.SDK_INT >= 23 && mouseAsFinger && event.getToolType(0) == MotionEvent.TOOL_TYPE_MOUSE &&
+            (event.actionMasked == MotionEvent.ACTION_BUTTON_PRESS || event.actionMasked == MotionEvent.ACTION_BUTTON_RELEASE) &&
+            event.actionButton == MotionEvent.BUTTON_PRIMARY
+        ) {
+            if (event.actionMasked == MotionEvent.ACTION_BUTTON_RELEASE && event.buttonState != 0) {
+                mouseAsFinger = false
+                sendAsFinger(event, MotionEvent.ACTION_UP)
+            }
+            return true
+        }
+        return super.dispatchGenericMotionEvent(event)
+    }
+
     /** Volume up / down flip to the previous / next page (unless turned off in the settings). */
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         val key = when (event.keyCode) {
@@ -220,7 +310,7 @@ class MainActivity : Activity(), SensorEventListener {
             KeyEvent.KEYCODE_VOLUME_DOWN -> "next"
             else -> null
         }
-        if (key == null || !volumeKeysFlipPages) return super.dispatchKeyEvent(event)
+        if (key == null || !volumeKeysFlipPages || !hasWeb) return super.dispatchKeyEvent(event)
         if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0)
             web.evaluateJavascript("window.onAndroidKey && window.onAndroidKey('$key')", null)
         return true
@@ -229,14 +319,17 @@ class MainActivity : Activity(), SensorEventListener {
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
         // Kiosk behaviour: Back does not leave the app, it returns to the first page.
+        if (!hasWeb) return super.onBackPressed() // nothing to return to without the panel
         web.evaluateJavascript("window.onAndroidBack && window.onAndroidBack()", null)
     }
 
     override fun onResume() {
         super.onResume()
+        if (!hasWeb) return
         resumed = true
         onScreen = true
         web.onResume()
+        web.evaluateJavascript("window.onAppPause && window.onAppPause(false)", null) // the panel catches up at once
         stream.start()
         hideSystemUi()
         sensors?.getDefaultSensor(Sensor.TYPE_LIGHT)?.let { sensors?.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL) }
@@ -255,7 +348,11 @@ class MainActivity : Activity(), SensorEventListener {
         dictation.cancel(0) // the microphone is never left open behind another app or a dark screen
         sensors?.unregisterListener(this)
         stream.stop()
-        web.onPause()
+        // WebView.onPause() leaves JavaScript running: tell the panel to stop polling and refreshing while nobody sees it
+        if (hasWeb) {
+            web.evaluateJavascript("window.onAppPause && window.onAppPause(true)", null)
+            web.onPause()
+        }
         super.onPause()
     }
 
@@ -267,8 +364,10 @@ class MainActivity : Activity(), SensorEventListener {
         stream.stop()
         link.trackpadSocket.close()
         link.close()
-        (web.parent as? ViewGroup)?.removeView(web) // a WebView must be detached before destroy()
-        web.destroy()
+        if (hasWeb) {
+            (web.parent as? ViewGroup)?.removeView(web) // a WebView must be detached before destroy()
+            web.destroy()
+        }
         super.onDestroy()
     }
 
@@ -308,15 +407,30 @@ class MainActivity : Activity(), SensorEventListener {
     private val bridgeKey = java.util.UUID.randomUUID().toString()
     private val documentStartKey by lazy { WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT) }
 
+    private fun panelBootstrap(): String {
+        val configuration = resources.configuration
+        val languages = JSONArray()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            val locales = configuration.locales
+            for (index in 0 until locales.size()) languages.put(locales[index].toLanguageTag())
+        } else {
+            @Suppress("DEPRECATION")
+            languages.put(configuration.locale.toLanguageTag())
+        }
+        return "window.__phoneboxKey='$bridgeKey';window.__phoneboxLanguages=$languages;"
+    }
+
     private fun giveKey(view: WebView, url: String?) {
         if (!documentStartKey && url?.startsWith("https://$ASSET_HOST/") == true)
-            view.evaluateJavascript("window.__phoneboxKey='$bridgeKey';", null)
+            view.evaluateJavascript(panelBootstrap(), null)
     }
 
     inner class Bridge {
         private fun ok(key: String) = key == bridgeKey
 
-        private val validTrackpadTypes = setOf("move", "click", "rightClick", "mousedown", "mouseup", "scroll", "hscroll")
+        private val validTrackpadTypes = setOf("move", "click", "rightClick", "mousedown", "mouseup", "scroll", "hscroll") +
+            // multi-finger gestures: three or four fingers swiping, four or five spreading or pinching (the agent follows the Mac's settings)
+            listOf("swipe3up", "swipe3down", "swipe3left", "swipe3right", "swipe4up", "swipe4down", "swipe4left", "swipe4right", "spread", "pinch")
 
         @JavascriptInterface
         fun trackpad(key: String, type: String, dx: Float, dy: Float, delta: Float) {
@@ -325,6 +439,21 @@ class MainActivity : Activity(), SensorEventListener {
             val cleanDy = if (dy.isFinite()) dy else 0f
             val cleanDelta = if (delta.isFinite()) delta else 0f
             link.sendTrackpad(type, cleanDx, cleanDy, cleanDelta)
+        }
+
+        // The WebView receives the saved agent preference. Remember it for pairing dialogs before the next connection.
+        @JavascriptInterface
+        fun setLanguage(key: String, tag: String) {
+            if (!ok(key) || !panelLanguageTag.matches(tag)) return
+            val language = when (tag) {
+                "auto" -> null
+                "zh" -> "zh-CN"
+                "zh-Hant" -> "zh-TW"
+                "pt" -> "pt-PT"
+                else -> tag
+            }
+            if (panelPreferences.getString("language", null) != language)
+                panelPreferences.edit().putString("language", language).apply()
         }
 
         /** Screen brightness 0..1; a negative value returns control to the system setting. */
@@ -436,12 +565,23 @@ class MainActivity : Activity(), SensorEventListener {
             if (!ok(key) || !link.select(id)) return
             runOnUiThread {
                 if (isFinishing || isDestroyed) return@runOnUiThread
-                stream.stop(); if (resumed) stream.start(); web.reload()
+                stream.stop(); if (resumed) stream.start(); if (hasWeb) web.reload()
             }
         }
 
         @JavascriptInterface
         fun forgetPc(key: String, id: String) { if (ok(key)) link.forget(id) }
+
+        /** True when the Wake button can work: the active computer's MACs are known and the phone is on a local network. */
+        @JavascriptInterface
+        fun canWake(key: String): Boolean = ok(key) && link.canWake()
+
+        /**
+         * Sends a Wake-on-LAN packet to the paired computer [id]. Takes a computer's id and never a MAC address, so a
+         * page cannot aim the packet at an arbitrary machine. False when nothing could be sent.
+         */
+        @JavascriptInterface
+        fun wakePc(key: String, id: String): Boolean = ok(key) && link.wake(id)
 
         /** "landscape" (default), "portrait" or "auto" (follow the phone). */
         @JavascriptInterface
@@ -496,7 +636,8 @@ class MainActivity : Activity(), SensorEventListener {
         private const val ASSET_HOST = "appassets.androidplatform.net"
         private val NO_STORE = mapOf("Cache-Control" to "no-store")
         private const val PANEL_HEADER = "X-PhoneBox-Panel"
-        private val READ_ONLY_IMAGES = setOf("/agent/api/art", "/agent/api/media/art", "/agent/api/system/apps/icon", "/agent/api/procs/icon", "/agent/api/controls/radio-logo", "/agent/api/apps/icon", "/agent/api/discord/img", "/agent/api/shortcuts/icon")
+        private val READ_ONLY_IMAGES = setOf("/agent/api/art", "/agent/api/media/art", "/agent/api/system/apps/icon", "/agent/api/procs/icon", "/agent/api/controls/radio-logo", "/agent/api/apps/icon",
+            "/agent/api/discord/img", "/agent/api/shortcuts/icon", "/agent/api/steam/cover", "/agent/api/wallpaper")
         private fun FORBIDDEN() = WebResourceResponse("text/plain", "utf-8", 403, "Forbidden", NO_STORE, java.io.ByteArrayInputStream(ByteArray(0)))
     }
 }

@@ -14,7 +14,7 @@
 <!-- Pages and widgets are built by main.js and widgets/*.js from the layout designed in the agent's settings page. -->
 <div id="pager"></div>
 
-<nav id="dots" data-i18n-title="panel.allPages" title="All pages"></nav>
+<nav id="dots"></nav>
 <div id="ptitle"></div>
 <div id="pagePauseOverlay" aria-hidden="true"></div>
 
@@ -36,14 +36,22 @@
 <div id="approval" hidden>
   <div class="ap-card" role="dialog" aria-modal="true" aria-labelledby="apTool">
     <div class="ap-grab" aria-hidden="true"></div>
-    <div class="ap-head"><span class="ap-logo" aria-hidden="true">✳</span><span class="ap-who"><span id="apSource">Claude Code</span><span class="ap-sep">·</span><span id="apProject"></span></span><span class="ap-count" id="apCount"></span></div>
+    <div class="ap-head"><span class="ap-logo" id="apLogo" aria-hidden="true">✳</span><span class="ap-who" id="apSource">Claude Code</span><span class="ap-count" id="apCount"></span></div>
+    <div class="ap-context"><b id="apProject"></b><span class="ap-sep" id="apContextSep">·</span><code id="apCwd"></code></div>
     <div class="ap-tool" id="apTool"></div>
     <div class="ap-desc" id="apDesc"></div>
     <pre class="ap-detail" id="apDetail"></pre>
+    <div class="ap-pattern" id="apPattern" hidden></div>
+    <div class="ap-choices" id="apChoices" hidden></div>
+    <div class="ap-custom" id="apCustom" hidden>
+      <input type="text" id="apCustomText" autocomplete="off" spellcheck="false" enterkeyhint="send">
+      <button class="ap-btn allow" id="apCustomSend" data-i18n="panel.answerSend">Send</button>
+    </div>
     <div class="ap-foot">
       <i class="ap-timer" id="apBar" aria-hidden="true"></i><span class="ap-time" id="apTime"></span>
       <button class="ap-btn deny" id="apDeny" data-i18n="panel.deny">Deny</button>
       <button class="ap-btn session" id="apSession" hidden data-i18n="panel.allowSession">This session</button>
+      <button class="ap-btn always" id="apAlways" hidden data-i18n="panel.allowAlways">Always allow</button>
       <button class="ap-btn allow" id="apAllow" data-i18n="panel.allow">Allow</button>
       <button class="ap-btn allow" id="apSkip" hidden data-i18n="panel.gotIt">Got it</button>
     </div>
@@ -61,6 +69,7 @@
 
 <div class="toast" id="toast"></div>
 <div id="offline"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 16.5a5 5 0 0 1 7 0M2 8.82a15 15 0 0 1 4.17-2.65M10.66 5c4.01-.36 8.14.9 11.34 3.76M16.85 11.25a10 10 0 0 1 2.22 1.68M5 13a10 10 0 0 1 5.24-2.76M12 20h.01M2 2l20 20"/></svg><span data-i18n="panel.pcNotConnected">PC not connected</span></div>
+<div id="wake" hidden><button type="button" data-i18n="panel.wake">Wake the PC</button><span class="note" role="status"></span></div>
 <div id="night"><div id="nClock">--:--</div><div id="nDate"></div></div>
 
 <div id="webviewWarn" hidden role="status" style="position:fixed;top:8px;left:8px;right:8px;z-index:90;align-items:center;gap:10px;padding:8px 12px;border-radius:10px;background:rgba(24,20,12,.94);border:1px solid rgba(245,158,11,.45);color:#fde68a;font:12.5px/1.35 system-ui,sans-serif">
@@ -157,6 +166,17 @@
 })();
 </script>
 <script src="compat.js"></script>
+<script src="locale-existing.js"></script>
+<script src="locale-tr.js"></script>
+<script src="locale-ja.js"></script>
+<script src="locale-ko.js"></script>
+<script src="locale-id.js"></script>
+<script src="locale-th.js"></script>
+<script src="locale-uk.js"></script>
+<script src="locale-hi.js"></script>
+<script src="locale-cs.js"></script>
+<script src="locale-ar.js"></script>
+<script src="locale-zh-Hant.js"></script>
 <script src="i18n.js"></script>
 <script type="module" src="main.js"></script>
 </body>

@@ -260,6 +260,9 @@ public static class Wake
     /// <summary>Goes up on every <see cref="Now"/>, so a loop can tell a wake-up from its own timer.</summary>
     public static long Count => Interlocked.Read(ref _count);
 
+    /// <summary>Current wake signal; capture before long work so a <see cref="Now"/> during that work still ends <see cref="Delay"/>.</summary>
+    public static Task Pending => _tcs.Task;
+
     public static void Now()
     {
         Interlocked.Increment(ref _count);
@@ -267,9 +270,12 @@ public static class Wake
     }
 
     /// <summary>Like Task.Delay, but returns early when <see cref="Now"/> is called.</summary>
-    public static async Task Delay(TimeSpan delay, CancellationToken ct)
+    public static Task Delay(TimeSpan delay, CancellationToken ct) => Delay(delay, ct, _tcs.Task);
+
+    /// <summary>Like <see cref="Delay(TimeSpan, CancellationToken)"/> using a wake task captured earlier in the iteration.</summary>
+    public static async Task Delay(TimeSpan delay, CancellationToken ct, Task wake)
     {
-        await Task.WhenAny(Task.Delay(delay, ct), _tcs.Task);
+        await Task.WhenAny(Task.Delay(delay, ct), wake);
         ct.ThrowIfCancellationRequested();
     }
 }

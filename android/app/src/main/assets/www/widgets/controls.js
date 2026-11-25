@@ -1,4 +1,4 @@
-import { icon, API, PANEL_HEADERS, api, applyState, bridge, D, evSeq, h, en, haptic, toast, store, t } from '../main.js';
+import { API, PANEL_HEADERS, api, applyState, bridge, buzz, D, evSeq, h, en, haptic, icon, toast, store, t, tp, tpv } from '../main.js';
 import { W } from '../registry.js';
 
 let cached = null, at = 0, epoch = 0, pending = null;
@@ -24,7 +24,11 @@ export async function deckCommand(kind, values = {}) {
   for (const [key, value] of Object.entries(values)) if (value != null) query.set(key, String(value));
   invalidateDeckState();
   const result = await api(`/controls/command/${encodeURIComponent(kind)}?${query}`, 'POST', 20000);
-  if (!result.ok) throw new Error(result.error || 'Control is unavailable');
+  if (!result.ok) {
+    // the whole answer stays on the error, for a control that reports more than one outcome (mics-camera-off)
+    const error = new Error(result.error || tp('Control is unavailable')); error.result = result;
+    throw error;
+  }
   invalidateDeckState();
   if (kind === 'action' || kind === 'sound-stop' || kind === 'media') {
     api('/state' + (evSeq != null ? '?ev=' + evSeq : '')).then(s => {
@@ -33,7 +37,8 @@ export async function deckCommand(kind, values = {}) {
   }
   return result;
 }
-const fail = error => toast(error?.message || 'The computer did not answer', 'err');
+// the Plex page-gate messages are translated on every path, also when a deck control (a playlist) is refused
+const fail = error => toast(plexText(error?.message) || tp('The computer did not answer'), 'err');
 const button = (label, click, name = label) => {
   const b = h('button', 'deck-button', label); b.type = 'button'; b.setAttribute('aria-label', name);
   b.onclick = async () => { haptic(); b.disabled = true; try { await click(); } catch (e) { fail(e); } finally { b.disabled = false; } };
@@ -47,7 +52,22 @@ function reconcile(root, nodes) {
   nodes.forEach((node, index) => { if (root.children[index] !== node) root.insertBefore(node, root.children[index] || null); });
   [...root.children].filter(node => !nodes.includes(node)).forEach(node => node.remove());
 }
-function empty(root, text) { root.replaceChildren(h('div', 'deck-empty', text)); }
+function empty(root, text) { root.replaceChildren(h('div', 'deck-empty', tp(text))); }
+// "Mics off, camera off" (#387): what happened to the microphones and to the OBS virtual camera, in the panel's
+// language. A camera OBS did not stop is never shown as off.
+function micsCameraText(r) {
+  const mics = r.mics === 'muted' ? tp('Microphones muted') : r.mics === 'pending' ? tp('A microphone could not be muted; retrying')
+    : tp('No microphone could be muted');
+  const camera = r.camera === 'stopped' ? tp('OBS virtual camera stopped') : r.camera === 'off' ? tp('OBS virtual camera was already off')
+    : r.camera === 'not-connected' ? tp('Camera not turned off: OBS is not connected') : tp('Camera not turned off: OBS did not stop the virtual camera');
+  return mics + ' · ' + camera;
+}
+async function micsCameraOff() {
+  let result;
+  try { result = await deckCommand('mics-camera-off'); }
+  catch (e) { if (!e.result?.camera) throw e; toast(micsCameraText(e.result), 'err', '', 6); return; }
+  toast(micsCameraText(result), 'ok', '', 4);
+}
 function slider(label, send, max = 100) {
   const input = h('input', 'deck-slider'); input.type = 'range'; input.min = 0; input.max = max; input.step = 1;
   input.setAttribute('aria-label', label);
@@ -69,15 +89,15 @@ function audioView(box, options, mode) {
   box.append(root);
   const rows = new Map();
   return data => {
-    if (!data.audio?.available) { empty(root, data.audio?.error || 'Audio is unavailable on this computer'); return; }
+    if (!data.audio?.available) { empty(root, data.audio?.error || tp('Audio is unavailable on this computer')); return; }
     let items = mode === 'apps' || mode === 'app' ? data.audio.sessions || [] : data.audio.devices || [];
     if (mode === 'mic') items = items.filter(d => d.direction === 'input');
     if (mode === 'output') items = items.filter(d => d.direction === 'output');
     if (options.device) items = items.filter(d => d.id === options.device);
-    if (options.application) items = items.filter(d => d.name.toLowerCase().includes(options.application.toLowerCase()));
+    if (options.application) { const want = options.application.toLowerCase(); items = items.filter(d => [d.name, d.processName].some(n => n?.toLowerCase().includes(want))); }
     if (mode === 'mic' && !options.device) items = items.filter(d => d.default);
     if (mode === 'balance') items = items.filter(d => d.direction === 'output' && d.channels >= 2 && (options.device || d.default));
-    if (!items.length) { empty(root, mode === 'app' ? 'Start the selected application and play audio' : 'No matching audio devices'); return; }
+    if (!items.length) { empty(root, mode === 'app' ? tp('Start the selected application and play audio') : tp('No matching audio devices')); return; }
     const nodes = items.map(item => {
       let row = rows.get(item.id);
       if (!row) {
@@ -86,7 +106,8 @@ function audioView(box, options, mode) {
         const signal = meter(item.peak);
         const kind = mode === 'app' || mode === 'apps' ? 'session' : 'device';
         const controls = slider(item.name + ' volume', value => deckCommand(kind, { id: item.id, value }));
-        const mute = button('Mute', () => deckCommand(kind, { id: item.id, muted: !row.item.muted }), 'Mute ' + item.name);
+        const mute = button('', () => deckCommand(kind, { id: item.id, muted: !row.item.muted }), 'Mute ' + item.name);
+        mute.classList.add('deck-mute');
         const balance = [];
         el.append(name, signal);
         if (mode === 'balance') {
@@ -99,7 +120,11 @@ function audioView(box, options, mode) {
         row = { el, name, signal, controls, mute, item, balance }; rows.set(item.id, row);
       }
       row.item = item; row.name.textContent = item.name;
-      row.controls.set(item.volume); row.mute.textContent = item.muted ? t('w.unmute') : t('w.mute');
+      row.controls.set(item.volume);
+      const muteAction = item.muted ? t('w.unmute') : t('w.mute');
+      row.mute.replaceChildren(icon(item.muted ? 'volume-x' : 'volume-2'));
+      row.mute.title = muteAction;
+      row.mute.setAttribute('aria-label', muteAction + ' ' + item.name);
       row.controls.input.disabled = item.canControl === false; row.mute.disabled = item.canControl === false;
       row.balance.forEach((slider, channel) => { const value = item.channelVolumes?.[channel]; slider.input.disabled = value == null; slider.set(value || 0); if (value == null) slider.number.textContent = 'n/a'; });
       row.mute.setAttribute('aria-pressed', String(item.muted));
@@ -112,7 +137,16 @@ function audioView(box, options, mode) {
 }
 
 function chooser(box, options, which) {
-  const list = h('div', 'deck-list'); box.append(list);
+  const layout = ['horizontal', 'grid', 'vertical'].includes(options.layout) ? options.layout : 'vertical';
+  const list = h('div', `deck-list deck-chooser deck-chooser-${layout}`); box.append(list);
+  const labels = new Map();
+  for (const line of String(options.labels || '').split(/\r?\n/)) {
+    const spacedSeparator = line.lastIndexOf(' = ');
+    const separator = spacedSeparator >= 0 ? spacedSeparator + 1 : line.indexOf('=');
+    if (separator < 0) continue;
+    const name = line.slice(0, separator).trim(), label = line.slice(separator + 1).trim();
+    if (name && label) labels.set(name, label);
+  }
   let signature = '';
   return data => {
     const items = which === 'media' ? data.media || [] : which === 'plans' ? data.powerPlans || [] : (data.audio?.devices || []).filter(d => d.direction === which);
@@ -120,23 +154,26 @@ function chooser(box, options, which) {
     const roleIndex = {console:0,media:1,communications:2}[role];
     const chosen = which === 'media' ? selectedPlayer(data, options)?.id : roleIndex != null && ['input','output'].includes(which)
       ? data.audio?.defaults?.[which+':'+roleIndex] : items.find(d => d.default || d.state === 'Active')?.id;
-    const key = JSON.stringify([items.map(i => [i.id, i.name]), chosen]); if (key === signature) return; signature = key;
-    if (!items.length) { empty(list, which === 'media' ? 'Start a media player on the computer' : 'No compatible devices found'); return; }
+    const key = JSON.stringify([items.map(i => [i.id, i.name]), chosen, layout, [...labels]]); if (key === signature) return; signature = key;
+    if (!items.length) { empty(list, which === 'media' ? tp('Start a media player on the computer') : tp('No compatible devices found')); return; }
     list.replaceChildren(...items.map(item => {
-      const b = button(item.name, async () => {
+      const b = button(labels.get(item.name) || item.name, async () => {
         if (which === 'media') store.set('control-player', item.id);
         else await deckCommand(which === 'plans' ? 'power-plan' : 'default', { id: item.id, op:role });
         signature = '';
-      });
+      }, item.name);
+      b.title = item.name;
       b.classList.toggle('selected', item.id === chosen); b.setAttribute('aria-pressed', String(item.id === chosen)); return b;
     }));
   };
 }
 
+const holdLabel = (power) => (power === 'sleep' ? tp('Hold: sleep') : power === 'restart' ? tp('Hold: restart')
+  : power === 'shutdown' ? tp('Hold: shutdown') : tp('Hold to talk'));
 function hold(box, options, power = null) {
-  const b = h('button', 'deck-hold', power ? `Hold: ${power}` : 'Hold to talk'); b.type = 'button';
+  const b = h('button', 'deck-hold', holdLabel(power)); b.type = 'button';
   b.disabled = true;
-  const status = h('div', 'deck-caption', power ? 'Hold for 2 seconds' : 'Release to restore the microphone'); box.append(b, status);
+  const status = h('div', 'deck-caption', power ? tp('Hold for 2 seconds') : tp('Release to restore the microphone')); box.append(b, status);
   let held = false, lease = null, timer = 0, renewal = 0, device = null;
   const end = async () => {
     held = false; clearTimeout(timer); clearInterval(renewal); b.classList.remove('held');
@@ -152,7 +189,7 @@ function hold(box, options, power = null) {
       lease = result.lease;
       if (!held) { await end(); return; }
       if (power) timer = setTimeout(async () => {
-        try { await deckCommand('power', { id: power, lease }); status.textContent = 'Power action scheduled'; } catch (e) { fail(e); }
+        try { await deckCommand('power', { id: power, lease }); status.textContent = tp('Power action scheduled'); } catch (e) { fail(e); }
         await end();
       }, 1700);
       else renewal = setInterval(() => deckCommand('ptt', { op: 'renew', lease }).catch(end), 1000);
@@ -169,7 +206,7 @@ function hold(box, options, power = null) {
     render(data) {
       device = options.device || data.audio?.devices?.find(d => d.direction === 'input' && d.default)?.id;
       b.disabled = power ? !data.allowPower : !device;
-      if (b.disabled) status.textContent = power ? 'Enable power controls in desktop settings' : 'No microphone is available';
+      if (b.disabled) status.textContent = power ? tp('Enable power controls in desktop settings') : tp('No microphone is available');
     },
     destroy() { end(); observer?.disconnect(); window.removeEventListener('blur', end); document.removeEventListener('visibilitychange', visibility); },
   };
@@ -186,14 +223,14 @@ function mediaView(box, options, mode) {
     shuffle = button('Shuffle', () => call('shuffle', current.shuffle ? 0 : 1));
     repeat = button('Repeat', () => call('repeat', current.repeat === 'None' ? 1 : current.repeat === 'Track' ? 2 : 0));
     controls.append(shuffle, repeat);
-  } else controls.append(button('⏮', () => call('prev'), 'Previous track'), button('⏯', () => call('playpause'), 'Play or pause'), button('⏭', () => call('next'), 'Next track'));
+  } else controls.append(button(icon('skip-back'), () => call('prev'), 'Previous track'), button(icon('play'), () => call('playpause'), 'Play or pause'), button(icon('skip-forward'), () => call('next'), 'Next track'));
   return data => {
     current = selectedPlayer(data, options);
-    title.textContent = current?.title || t('w.noMediaSelected'); source.textContent = current?.name || 'Choose a source in Media sources';
+    title.textContent = current?.title || t('w.noMediaSelected'); source.textContent = current?.name || tp('Choose a source in Media sources');
     controls.querySelectorAll('button').forEach(b => b.disabled = !current);
     if (seek) { seek.input.max = Math.max(1, current?.duration || 1); seek.set(current?.position || 0); seek.number.textContent = `${Math.floor((current?.position || 0) / 1000)} / ${Math.floor((current?.duration || 0) / 1000)} s`; seek.input.disabled = !current?.canSeek; }
     if (shuffle) { shuffle.disabled = !current?.canShuffle; shuffle.setAttribute('aria-pressed', String(!!current?.shuffle)); }
-    if (repeat) { repeat.disabled = !current?.canRepeat; repeat.textContent = 'Repeat: ' + (current?.repeat || 'None'); }
+    if (repeat) { repeat.disabled = !current?.canRepeat; repeat.textContent = tp('Repeat: ') + tp(current?.repeat || 'None'); }
   };
 }
 
@@ -203,7 +240,7 @@ const groups = {
   'display-profiles': ['display-profile'], 'focus-profile': ['focus', 'macro'],
   'meeting-controls': ['meeting'], 'discord-controls': ['discord'], 'meeting-profile': ['meeting', 'macro'],
   'task-runner': ['task'], 'dev-servers': ['server'], services: ['service'], 'workflow-runner': ['workflow'], 'script-pad': ['task', 'shortcut'],
-  soundboard: ['sound'], radio: ['radio'], playlists: ['playlist'], 'audio-routing': ['audio-route'],
+  soundboard: ['sound'], radio: ['radio'], playlists: ['playlist'], 'plex-playlists': ['plex-playlist'], 'audio-routing': ['audio-route'],
   'external-mixer': ['mixer', 'mixer-mute'], 'midi-pad': ['midi'], 'osc-pad': ['osc'],
 };
 function actionsView(box, options, type) {
@@ -217,12 +254,12 @@ function actionsView(box, options, type) {
     const key = JSON.stringify(items); if (key === signature) return; signature = key;
     if (!items.length) { empty(grid, 'Assign controls in the computer’s Control Deck settings'); return; }
     grid.replaceChildren(...items.map(item => {
-      const label = h('span', '', item.name), state = h('small', '', item.state || 'Ready');
+      const label = h('span', '', item.name), state = h('small', '', tp(item.state || 'Ready'));
       const b = button('', async () => { await deckCommand(item.kind === 'profile' ? 'profile' : 'action', { id: item.id, op: item.kind === 'radio' ? 'toggle' : (type === 'app-dock' ? 'focus' : '') }); signature = ''; });
       b.disabled = item.available === false;
       b.append(label, state);
-      if (type === 'dev-servers') return h('div', 'deck-task', b, button('Stop', () => deckCommand('action', { id: item.id, op: 'stop' }), 'Stop ' + item.name));
-      if (type === 'soundboard') return h('div', 'deck-task', b, button('Stop', () => deckCommand('sound-stop', { id: item.id }), 'Stop ' + item.name));
+      if (type === 'dev-servers') return h('div', 'deck-task', b, button(tp('Stop'), () => deckCommand('action', { id: item.id, op: 'stop' }), tp('Stop') + ' ' + item.name));
+      if (type === 'soundboard') return h('div', 'deck-task', b, button(tp('Stop'), () => deckCommand('sound-stop', { id: item.id }), tp('Stop') + ' ' + item.name));
       return b;
     }));
   };
@@ -259,12 +296,12 @@ function radioView(box, options) {
     };
     prevBtn = h('button', 'radio-nav radio-nav-prev', '‹');
     prevBtn.type = 'button';
-    prevBtn.setAttribute('aria-label', 'Previous stations');
+    prevBtn.setAttribute('aria-label', tp('Previous stations'));
     prevBtn.onclick = (e) => { e.stopPropagation(); stepScroll(-1); };
 
     nextBtn = h('button', 'radio-nav radio-nav-next', '›');
     nextBtn.type = 'button';
-    nextBtn.setAttribute('aria-label', 'Next stations');
+    nextBtn.setAttribute('aria-label', tp('Next stations'));
     nextBtn.onclick = (e) => { e.stopPropagation(); stepScroll(1); };
 
     track.addEventListener('scroll', syncNav, { passive: true });
@@ -546,14 +583,14 @@ function listening(box) {
   });
   toggle.disabled = true;
   box.append(toggle, state);
-  return { render(data) { toggle.disabled = !data.allowListening; if (!data.allowListening) state.textContent = 'Enable listening in desktop settings'; }, destroy: stop };
+  return { render(data) { toggle.disabled = !data.allowListening; if (!data.allowListening) state.textContent = tp('Enable listening in desktop settings'); }, destroy: stop };
 }
 
 export function registerDeckWidget(type, title, mode = type) {
   W[type] = {
     needs: ['tick'],
     create(box, { o }) {
-      box.classList.add('control-deck'); box.append(h('div', 'w-title', o.title || title));
+      box.classList.add('control-deck'); box.append(h('div', 'w-title', o.title || en(title)));
       let render = null, component = null, alive = true, loading = false;
       if (['apps', 'app', 'mic', 'output', 'balance', 'meter'].includes(mode)) render = audioView(box, o, mode);
       else if(mode === 'external-mixer')render=mixerView(box,o);
@@ -562,9 +599,10 @@ export function registerDeckWidget(type, title, mode = type) {
       else if (mode === 'ptt') component = hold(box, o);
       else if (mode === 'listen') component = listening(box);
       else if (['remote', 'seek', 'modes'].includes(mode)) render = mediaView(box, o, mode);
-      else if (mode === 'panic') box.append(button('Mute audio + microphones', () => deckCommand('panic')));
-      else if (mode === 'desktops') box.append(button('← Desktop', () => deckCommand('desktop', { value: -1 })), button('Desktop →', () => deckCommand('desktop', { value: 1 })));
-      else if (mode === 'system') box.append(button('Lock', () => deckCommand('lock')), button('Display off', () => deckCommand('monitor-off')));
+      else if (mode === 'panic') box.append(button(tp('Mute audio + microphones'), () => deckCommand('panic')));
+      else if (mode === 'mics-camera-off') box.append(button(tp('Mute microphones + stop OBS camera'), micsCameraOff));
+      else if (mode === 'desktops') box.append(button(tp('← Desktop'), () => deckCommand('desktop', { value: -1 })), button(tp('Desktop →'), () => deckCommand('desktop', { value: 1 })));
+      else if (mode === 'system') box.append(button(tp('Lock'), () => deckCommand('lock')), button(tp('Display off'), () => deckCommand('monitor-off')));
       else if (mode === 'power') {
         const group = h('div', 'deck-power-grid'); box.append(group);
         const components = ['sleep', 'restart', 'shutdown'].map(action => { const item = h('div', 'deck-power-item'); group.append(item); return hold(item, o, action); });
@@ -582,7 +620,7 @@ export function registerDeckWidget(type, title, mode = type) {
         box.append(button(`Sleep in ${o.minutes || 30} min`, () => deckCommand('sleep', { id: player?.id || '', value: o.minutes || 30 })),
           button('Cancel timer', () => deckCommand('sleep', { id: player?.id || '', value: 0 })), caption);
         render = data => { player = selectedPlayer(data, o); const timer = data.sleep?.find(t => t.id === player?.id);
-          caption.textContent = timer ? `Pausing ${player?.name || 'player'} in ${Math.max(0, Math.ceil((timer.at - Date.now()) / 60000))} min` : t('w.noSleepTimer'); };
+          caption.textContent = timer ? tpv('Pausing {player} in {n} min', { player: player?.name || tp('player'), n: Math.max(0, Math.ceil((timer.at - Date.now()) / 60000)) }) : t('w.noSleepTimer'); };
       } else if (mode === 'brightness') {
         const list = h('div', 'deck-list'); box.append(list); const rows = new Map();
         render = data => {
@@ -590,7 +628,7 @@ export function registerDeckWidget(type, title, mode = type) {
           if (!items.length) { empty(list, t('w.noMonitors')); return; }
           reconcile(list, items.map(m => { if (!rows.has(m.id)) { const s = slider(m.name + ' brightness', value => deckCommand('brightness', { id: m.id, value }));
             rows.set(m.id, { ...s, el: h('div', 'deck-channel', h('div', 'deck-channel-name', m.name), s.input, s.number) }); }
-            const row = rows.get(m.id); row.input.disabled = m.brightness == null; row.set(m.brightness || 0); if (m.brightness == null) row.number.textContent = 'DDC/CI unavailable'; return row.el; }));
+            const row = rows.get(m.id); row.input.disabled = m.brightness == null; row.set(m.brightness || 0); if (m.brightness == null) row.number.textContent = tp('DDC/CI unavailable'); return row.el; }));
         };
       } else if (mode === 'radio') render = radioView(box, o);
       else render = actionsView(box, o, type);
@@ -611,7 +649,7 @@ export function registerDeckWidget(type, title, mode = type) {
 for (const [type, title, mode] of [
   ['audio-mixer', 'Application mixer', 'apps'], ['app-volume', 'Application volume', 'app'],
   ['device-volume', 'Device volume', 'output'], ['audio-balance', 'Channel balance', 'balance'], ['audio-meter', 'Audio levels', 'meter'],
-  ['panic-mute', 'Emergency mute', 'panic'], ['microphone', 'Microphone', 'mic'], ['audio-inputs', 'Microphone selection', 'inputs'],
+  ['panic-mute', 'Emergency mute', 'panic'], ['mics-camera-off', 'Mics off, camera off', 'mics-camera-off'], ['microphone', 'Microphone', 'mic'], ['audio-inputs', 'Microphone selection', 'inputs'],
   ['audio-outputs', 'Output selection', 'outputs'], ['push-to-talk', 'Push to talk', 'ptt'], ['audio-profiles', 'Audio profiles', 'profiles'],
   ['audio-ducking', 'Audio ducking', 'duck'], ['media-sources', 'Media sources', 'sources'], ['media-remote', 'Media remote', 'remote'],
   ['media-seek', 'Playback position', 'seek'], ['media-modes', 'Shuffle and repeat', 'modes'], ['media-sleep', 'Music sleep timer', 'sleep'],
@@ -624,12 +662,12 @@ W['meeting-status'] = { needs: ['state', 'push'], create: (box, ctx) => W.onair.
 
 async function integrationCommand(path, values = {}) {
   const result = await api('/controls/' + path + '?' + new URLSearchParams(values), 'POST', 20000);
-  if (!result.ok) throw new Error(result.error || 'Integration refused this control');
+  if (!result.ok) throw new Error((path.startsWith('plex/') ? plexText(result.error) : result.error) || tp('Integration refused this control'));
   return result;
 }
 function integrationWidget(type, title, endpoint, create) {
   W[type] = { needs: ['tick'], create(box, {o}) {
-    box.classList.add('control-deck'); box.append(h('div', 'w-title', o.title || title));
+    box.classList.add('control-deck'); box.append(h('div', 'w-title', o.title || en(title)));
     const root = h('div', 'deck-list'); box.append(root);
     let alive = true, busy = false, signature = '', data = null;
     return { async update() {
@@ -638,10 +676,10 @@ function integrationWidget(type, title, endpoint, create) {
         data = await api('/controls/' + endpoint, 'GET', 20000); if (!alive) return;
         if (root.contains(document.activeElement) && document.activeElement.matches('input,textarea,select') || root.matches(':active') || root.querySelector(':active')) return;
         const key = JSON.stringify(data); if (key === signature) return; signature = key;
-        if (!data.connected) { empty(root, data.error || 'Connect this integration in desktop settings'); return; }
+        if (!data.connected) { empty(root, (endpoint.startsWith('plex/') ? plexText(data.error) : data.error) || tp('Connect this integration in desktop settings')); return; }
         root.replaceChildren();
-        create(root, data, (action, args) => integrationCommand(endpoint === 'obs' ? 'obs/' + action : 'spotify/action/' + action, args).then(()=>{signature='';}), o);
-      } catch (error) { if (alive) empty(root, error.message || 'Integration is unavailable'); }
+        create(root, data, (action, args) => integrationCommand(endpoint === 'obs' ? 'obs/' + action : endpoint.startsWith('plex/') ? 'plex/action/' + action : 'spotify/action/' + action, args).then(()=>{signature='';}), o);
+      } catch (error) { if (alive) empty(root, error.message || tp('Integration is unavailable')); }
       finally { busy = false; }
     }, destroy() { alive = false; } };
   } };
@@ -652,7 +690,7 @@ integrationWidget('obs-mixer', 'OBS mixer', 'obs', (root, data, send) => {
   for (const input of data.inputs) {
     const s = slider(input.name + ' volume', value => send('volume', {id:input.id,value}));
     s.set(input.volume || 0); s.input.disabled = input.volume == null;
-    const mute = button(input.muted ? 'Unmute' : 'Mute', ()=>send('mute',{id:input.id,enabled:!input.muted}), 'Mute ' + input.name);
+    const mute = button(input.muted ? tp('Unmute') : tp('Mute'), ()=>send('mute',{id:input.id,enabled:!input.muted}), 'Mute ' + input.name);
     mute.disabled = input.muted == null;
     root.append(h('div','deck-channel',h('div','deck-channel-name',input.name),s.input,h('div','deck-channel-foot',s.number,mute)));
   }
@@ -665,13 +703,13 @@ integrationWidget('obs-sources', 'OBS sources', 'obs', (root, data, send) => {
   for(const source of data.sources || []) { const b=button((source.enabled?'● ':'○ ')+source.name,()=>send('source',{id:source.id,enabled:!source.enabled}));b.setAttribute('aria-pressed',String(source.enabled));root.append(b); }
 });
 integrationWidget('obs-recording', 'OBS recording and stream', 'obs', (root,data,send)=>{
-  root.append(h('div','deck-track','Recording '+timeText(data.recordMs)),h('div','deck-caption','Stream '+timeText(data.streamMs)),
-    button(data.recording?'Stop recording':'Start recording',()=>send('record')),
-    button(data.streaming?'Stop stream':'Start stream',()=>send('stream')));
-  const pause=button(data.recordPaused?'Resume recording':'Pause recording',()=>send('pause'));pause.disabled=!data.recording;root.append(pause);
+  root.append(h('div','deck-track',tp('Recording ')+timeText(data.recordMs)),h('div','deck-caption',tp('Stream ')+timeText(data.streamMs)),
+    button(data.recording?tp('Stop recording'):tp('Start recording'),()=>send('record')),
+    button(data.streaming?tp('Stop stream'):tp('Start stream'),()=>send('stream')));
+  const pause=button(data.recordPaused?tp('Resume recording'):tp('Pause recording'),()=>send('pause'));pause.disabled=!data.recording;root.append(pause);
 });
 integrationWidget('obs-replay', 'OBS replay buffer', 'obs', (root,data,send)=>{
-  const toggle=button(data.replayActive?'Stop replay buffer':'Start replay buffer',()=>send('replay'));toggle.disabled=!data.replayAvailable;
+  const toggle=button(data.replayActive?tp('Stop replay buffer'):tp('Start replay buffer'),()=>send('replay'));toggle.disabled=!data.replayAvailable;
   const save=button('Save replay',()=>send('save-replay'));save.disabled=!data.replayActive;root.append(toggle,save);
 });
 integrationWidget('obs-transition', 'OBS transition', 'obs', (root,data,send)=>{
@@ -679,7 +717,7 @@ integrationWidget('obs-transition', 'OBS transition', 'obs', (root,data,send)=>{
   const s=slider('Transition duration',value=>send('duration',{value}),10000);s.input.min=50;s.input.step=50;s.set(data.duration || 300);s.input.disabled=data.duration==null;root.append(s.input,s.number);
 });
 integrationWidget('obs-camera', 'OBS virtual camera', 'obs', (root,data,send)=>{
-  const b=button(data.cameraActive?'Stop virtual camera':'Start virtual camera',()=>send('camera'));b.disabled=!data.cameraAvailable;root.append(b);
+  const b=button(data.cameraActive?tp('Stop virtual camera'):tp('Start virtual camera'),()=>send('camera'));b.disabled=!data.cameraAvailable;root.append(b);
 });
 // Spotify's image server only (the agent passes nothing else); the phone loads covers itself while the option is on.
 const SPOTIFY_COVER = /^https:\/\/i\.scdn\.co\/image\/[A-Za-z0-9]+$/;
@@ -709,6 +747,27 @@ integrationWidget('media-queue', 'Spotify queue', 'spotify/state', (root,data,se
     root.append(b);
   }
 });
+// Agent error text for the Plex widgets: the two page-gate messages are translated; any other text is shown as the agent sent it.
+const plexText = text => text === 'Add a Plex widget to an enabled page' ? tp('Add a Plex widget to an enabled page') : text === 'Add a Plex playlists widget to an enabled page' ? tp('Add a Plex playlists widget to an enabled page') : text;
+// Plex music (Caldera Amp): the same queue as above without covers. The agent passes on only an id, a name and an artist.
+integrationWidget('plex-queue', 'Plex queue', 'plex/state', (root,data,send)=>{
+  const text = (name, artist) => h('div','sq-txt', h('div','sq-name',name || ''), artist ? h('div','sq-artist',artist) : null);
+  const cur = data.current;
+  root.classList.add('sq');
+  root.append(h('div','sq-now' + (data.playing ? ' playing' : ''),
+    h('div','sq-txt', h('div','sq-label', t(cur ? 'w.nowPlaying' : 'w.nothingPlaying')),
+      cur ? h('div','sq-name',cur.name || '') : null, cur?.artist ? h('div','sq-artist',cur.artist) : null)));
+  // a connected answer can still carry a reason for an empty queue (the player is playing from another server)
+  if (!data.queue?.length) { root.append(h('div','deck-empty',(data.error ? plexText(data.error) : '') || t('w.queueEmpty'))); return; }
+  root.append(h('div','sq-head',t('w.upNext')));
+  for (const item of data.queue) {
+    const b = h('button','sq-item', text(item.name, item.artist));
+    b.type = 'button';
+    b.setAttribute('aria-label', item.name + (item.artist ? ' · ' + item.artist : ''));
+    b.onclick = () => { haptic(); send('play-queued',{id:item.id}).catch(fail); };
+    root.append(b);
+  }
+});
 integrationWidget('media-favorites', 'Spotify favorites', 'spotify/state', (root,data,send)=>{
   root.append(h('div','deck-track',data.current?.name || t('w.nothingPlaying')),h('div','deck-caption',data.current?.artist || ''));
   const b=button('Save to library',()=>send('favorite'));b.disabled=!data.current?.id;root.append(b);
@@ -718,7 +777,7 @@ W['meeting-timer'] = {needs:['tick'],create(box,{o}){
   const clock=h('div','deck-track');box.classList.add('control-deck');box.append(h('div','w-title',o.title || en('Meeting timer')),clock);
   let state=store.get(key,{elapsed:0,started:0});
   const persist=()=>store.set(key,state);
-  const start=button(state.started?'Pause':'Start',()=>{state=store.get(key,state);if(state.started){state.elapsed+=Date.now()-state.started;state.started=0;}else state.started=Date.now();persist();render();});
+  const start=button(state.started?tp('Pause'):tp('Start'),()=>{state=store.get(key,state);if(state.started){state.elapsed+=Date.now()-state.started;state.started=0;}else state.started=Date.now();persist();render();});
   box.append(start,button('Reset',()=>{state={elapsed:0,started:0};persist();render();}));
   function render(){state=store.get(key,state);const elapsed=state.elapsed+(state.started?Date.now()-state.started:0);clock.textContent=timeText(elapsed);start.textContent=state.started?t('w.pause'):t('w.start');start.setAttribute('aria-label',start.textContent);clock.classList.toggle('deck-overdue',elapsed>=(o.minutes || 30)*60000);}
   render();return {update:render};
@@ -736,14 +795,29 @@ W.trackpad = {
     const holdDuration = Math.max(100, Number(o.holdDuration) || 350);
     const scrollBar = o.scrollBar || 'right';
     const scrollBarWidth = Math.max(16, Number(o.scrollBarWidth) || 36);
+    // A different feel for each thing the pad does: a tick for a click, two for a right click, a firmer press when a
+    // drag starts, a longer one when a gesture fires, and a light tick for every notch of a scroll. "Haptic feedback"
+    // sets how strong they are (or turns them off) and "Tick while scrolling" turns the scroll ticks on (off by default).
+    // They go through the panel's buzz(), so night mode and the display's vibration switch silence them too. The gestures
+    // vibrate only for a Mac: the agent ignores them on any other computer, where a vibration would suggest something happened.
+    const strength = o.haptics === 'off' ? 0 : ({ light: 0.6, strong: 1.8 }[o.haptics] ?? 1);
+    const scrollTicks = o.scrollHaptics === true;
+    const patterns = { click: '0,14', rightClick: '0,14,70,14', drag: '0,30', swipe: '0,20,45,20', spread: '0,45', pinch: '0,45', scroll: '0,8' };
+    const feel = (kind) => {
+      if (!strength || (kind === 'scroll' && !scrollTicks) || !patterns[kind]) return;
+      if ((kind === 'swipe' || kind === 'spread' || kind === 'pinch') && D.state?.os !== 'macos') return;
+      // only the vibrations get weaker or stronger, not the pauses between them
+      const pattern = patterns[kind].split(',').map((ms, i) => (i % 2 ? Math.max(4, Math.round(Number(ms) * strength)) : Number(ms))).join(',');
+      buzz(pattern);
+    };
 
     const surface = h('div', 'deck-trackpad-surface',
-      h('div', 'deck-trackpad-icon', controlEnabled ? '🖱️' : '🔒'),
+      h('div', 'deck-trackpad-icon', icon(controlEnabled ? 'mouse' : 'lock')),
       h('div', 'deck-trackpad-hint', !controlEnabled
-        ? 'Enable mouse control in widget settings'
+        ? tp('Enable mouse control in widget settings')
         : (scrollBar !== 'none'
-          ? 'Drag to move · Tap to click · Hold to drag · Bar or 2 fingers to scroll'
-          : 'Drag to move · Tap to click · Hold to drag · Two fingers to scroll'))
+          ? tp('Drag to move · Tap to click · Hold to drag · Bar or 2 fingers to scroll')
+          : tp('Drag to move · Tap to click · Hold to drag · Two fingers to scroll')))
     );
 
     let scrollBarEl = null;
@@ -846,13 +920,81 @@ W.trackpad = {
       const sy = Math.round(accScrollY);
       accScrollX -= sx;
       accScrollY -= sy;
-      if (sx !== 0 || sy !== 0) send({ type: 'scroll', dx: sx, dy: sy, delta: sy });
+      if (sx !== 0 || sy !== 0) { send({ type: 'scroll', dx: sx, dy: sy, delta: sy }); scrollFeel(sx, sy); }
+    }
+    // a light tick for each notch of a wheel (120), at most one every 45 ms so a fast scroll hums instead of buzzing
+    let scrollSince = 0, lastScrollTick = 0;
+    function scrollFeel(dx, dy) {
+      scrollSince += Math.abs(dx) + Math.abs(dy);
+      const now = performance.now();
+      if (scrollSince < 120 || now - lastScrollTick < 45) return;
+      scrollSince %= 120;
+      lastScrollTick = now;
+      feel('scroll');
     }
 
     const activePointers = new Map();
     let maxActivePointers = 0, moved = false, tapFired = false;
     let isDragging = false, holdTimer = null;
     let scrollAxis = null, cumScrollX = 0, cumScrollY = 0;
+
+    // Three or more fingers make a gesture, as on a Mac's trackpad: a swipe (3 or 4 fingers) or, with 4 or more, a spread
+    // or pinch. The agent decides what it does from the Mac's own Trackpad settings and ignores it on other computers.
+    let gestureBase = null, gestureFired = false, gestureCheckScheduled = false, gestureQuietTimer = null;
+    const touches = () => [...activePointers.values()].filter((p) => !p.isBar);
+    function gestureShape() {
+      const ps = touches(), n = ps.length;
+      let cx = 0, cy = 0, r = 0;
+      for (const p of ps) { cx += p.lastX; cy += p.lastY; }
+      cx /= n; cy /= n;
+      for (const p of ps) r += Math.hypot(p.lastX - cx, p.lastY - cy);
+      return { n, cx, cy, r: r / n };
+    }
+    // measure from here: with three or more fingers down, or no gesture to judge
+    function rebase() {
+      clearTimeout(gestureQuietTimer);
+      const ps = touches();
+      gestureBase = !gestureFired && ps.length >= 3 ? gestureShape() : null;
+      for (const p of ps) { p.baseX = p.lastX; p.baseY = p.lastY; }
+    }
+    // 'out' when every finger that has moved went mostly away from the middle it started around, 'in' when mostly towards it
+    function radialMotion(b) {
+      let out = 0, inward = 0, other = 0;
+      for (const p of touches()) {
+        const dx = p.lastX - p.baseX, dy = p.lastY - p.baseY, d = Math.hypot(dx, dy);
+        if (d <= 12) continue; // it rests
+        const rx = p.baseX - b.cx, ry = p.baseY - b.cy, r = Math.hypot(rx, ry);
+        if (r < 8) continue; // it started in the middle: there is no away or towards, so it neither helps nor hinders
+        const along = (dx * rx + dy * ry) / (d * r);
+        if (along >= 0.6) out++; else if (along <= -0.6) inward++; else other++;
+      }
+      return other === 0 && out > 0 && inward === 0 ? 'out' : other === 0 && inward > 0 && out === 0 ? 'in' : null;
+    }
+    // A swipe is judged as it goes, from how far the fingers' middle has moved. A spread or pinch is judged only when the fingers
+    // have finished (one lifts, or they have been still for a moment): while they are moving, a frame can show some of them
+    // moved and the others not yet, which is a partial sample that looks like one.
+    function checkGesture(final = false) {
+      const g = gestureShape(), b = gestureBase;
+      if (g.n !== b.n) { rebase(); return; } // a finger landed or lifted: measure again from here
+      const dx = g.cx - b.cx, dy = g.cy - b.cy, dist = Math.hypot(dx, dy);
+      const ratio = b.r > 8 ? g.r / b.r : 1;
+      // A spread or pinch is the fingers moving apart or together, so at least half of them must have moved: one finger that
+      // has moved before the others (a frame, a pause, a finger lifting) is not one, and fingers that rest do not stop it.
+      const together = touches().filter((p) => Math.hypot(p.lastX - p.baseX, p.lastY - p.baseY) > 12).length >= Math.ceil(g.n / 2);
+      // and the way they moved: away from the middle for a spread, towards it for a pinch. One finger that moved along
+      // (up, say, while the others have yet to follow) changed the spread of the fingers but did not open them.
+      const way = radialMotion(b);
+      let type = null;
+      if (final && g.n >= 4 && together && way === 'out' && dist < 45 && ratio > 1.35) type = 'spread';
+      else if (final && g.n >= 4 && together && way === 'in' && dist < 45 && ratio < 0.72) type = 'pinch';
+      else if (dist > 60) type = 'swipe' + Math.min(g.n, 4) + (Math.abs(dx) > Math.abs(dy) ? (dx < 0 ? 'left' : 'right') : (dy < 0 ? 'up' : 'down'));
+      if (!type) return;
+      gestureFired = true;
+      clearTimeout(gestureQuietTimer);
+      moved = true;
+      send({ type });
+      feel(type.startsWith('swipe') ? 'swipe' : type);
+    }
 
     pad.addEventListener('pointerdown', (e) => {
       e.stopPropagation(); e.preventDefault();
@@ -879,6 +1021,7 @@ W.trackpad = {
         cumScrollX = 0;
         cumScrollY = 0;
       }
+      if (!isBar) rebase();
       if (!isBar && activePointers.size === 1) {
         moved = false;
         tapFired = false;
@@ -887,7 +1030,7 @@ W.trackpad = {
             isDragging = true;
             flushMove();
             send({ type: 'mousedown' });
-            haptic();
+            feel('drag');
           }
         }, holdDuration);
       }
@@ -899,6 +1042,8 @@ W.trackpad = {
       if (!pt) return;
       const rawDx = e.clientX - pt.lastX, rawDy = e.clientY - pt.lastY;
       pt.lastX = e.clientX; pt.lastY = e.clientY;
+      // after a gesture fires, the fingers still down do nothing until all of them lift (no scroll, no pointer)
+      if (gestureFired) return;
 
       if (pt.isBar) {
         const factor = natural ? 1 : -1;
@@ -909,6 +1054,19 @@ W.trackpad = {
       if (Math.hypot(e.clientX - pt.startX, e.clientY - pt.startY) > 6) {
         moved = true;
         if (!isDragging && holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+      }
+
+      // a finger's pointermove comes one at a time, so look at the fingers together once per frame, not between two of them
+      if (gestureBase && !gestureFired && !gestureCheckScheduled) {
+        gestureCheckScheduled = true;
+        requestAnimationFrame(() => {
+          gestureCheckScheduled = false;
+          if (!destroyed && gestureBase && !gestureFired) checkGesture();
+        });
+      }
+      clearTimeout(gestureQuietTimer);
+      if (gestureBase && !gestureFired) {
+        gestureQuietTimer = setTimeout(() => { if (!destroyed && gestureBase && !gestureFired) checkGesture(true); }, 90);
       }
 
       if (activePointers.size === 1) {
@@ -993,6 +1151,8 @@ W.trackpad = {
       e.stopPropagation(); e.preventDefault();
       try { pad.releasePointerCapture(e.pointerId); } catch (_) {}
       if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+      // a quick flick can lift in the frame of its last move: judge the fingers now, before the one that lifts is gone
+      if (e.type === 'pointerup' && gestureBase && !gestureFired) checkGesture(true);
       const pt = activePointers.get(e.pointerId);
       if (pt?.isBar) {
         if (scrollBarEl) scrollBarEl.classList.remove('is-scrolling');
@@ -1007,17 +1167,18 @@ W.trackpad = {
         if (maxActivePointers === 1 && duration < 300) {
           flushMove();
           send({ type: 'click' });
-          haptic();
+          feel('click');
           tapFired = true;
         } else if (maxActivePointers === 2 && duration < 400) {
           flushMove();
           flushScroll();
           send({ type: 'rightClick' });
-          haptic();
+          feel('rightClick');
           tapFired = true;
         }
       }
       activePointers.delete(e.pointerId);
+      rebase();
       if (activePointers.size < 2) {
         scrollAxis = null;
         cumScrollX = 0;
@@ -1025,6 +1186,7 @@ W.trackpad = {
       }
       if (activePointers.size === 0) {
         maxActivePointers = 0; moved = false; tapFired = false;
+        gestureFired = false; gestureBase = null; scrollSince = 0;
         if (scrollBarEl) scrollBarEl.classList.remove('is-scrolling');
         flushMove(); flushScroll();
       }
@@ -1050,6 +1212,7 @@ W.trackpad = {
         cumScrollY = 0;
         if (reconnectTimer) clearTimeout(reconnectTimer);
         if (holdTimer) clearTimeout(holdTimer);
+        clearTimeout(gestureQuietTimer);
         if (isDragging) { send({ type: 'mouseup' }); isDragging = false; }
         if (ws) { try { ws.close(); } catch (_) {} ws = null; }
         activePointers.clear();

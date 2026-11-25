@@ -222,7 +222,7 @@ for (const hour12 of [false, true]) {
       { id: 'cd', type: 'countdown', x: 0, y: 3, w: 6, h: 3, options: { target: '2026-12-24 09:30' } },
     ], { display: { idleReturnSec: 0, hour12 } });
     await expect(page.locator('.clock .hh')).toHaveText(hour12 ? '2' : '14');
-    await expect(page.locator('.clock .ap')).toHaveText(hour12 ? 'PM' : '');
+    await expect(page.locator('.clock .ap')).toHaveText(hour12 ? /^pm$/i : '');
     await expect(page.locator('.wc-t')).toHaveText(hour12 ? ['2:05 PM', '11:05 PM'] : ['14:05', '23:05']);
     await expect(page.locator('.cd-s')).toContainText(hour12 ? '9:30 AM' : '09:30');
     await page.screenshot({ path: `test-results/hour12-${hour12}.png` });
@@ -255,7 +255,7 @@ test('clock times follow display.hour12 ("auto") via Android.is24Hour bridge and
   ], { display: { idleReturnSec: 0, hour12: 'auto' } });
 
   await expect(page.locator('.clock .hh')).toHaveText('2');
-  await expect(page.locator('.clock .ap')).toHaveText('PM');
+  await expect(page.locator('.clock .ap')).toHaveText(/^pm$/i);
   await expect(page.locator('.wc-t')).toHaveText(['2:05 PM', '11:05 PM']);
   await expect(page.locator('.cd-s')).toContainText('9:30 AM');
 
@@ -456,6 +456,56 @@ test('the weather shows Fahrenheit when the settings say so', async ({ page }) =
   await layout(page, widgets, { weather: { city: 'Alpha', lat: 10, lon: 10 } });
   await expect(page.locator('.wx-temp')).toHaveText('31°');
   await expect(page.locator('.fc-v').first()).toHaveText('32° -5°');
+});
+
+// weather.model pins the Open-Meteo model: the forecast URL names it, a model change fetches anew instead of keeping the
+// cached forecast for 14 minutes, and Automatic ("") sends no models parameter at all.
+test('the weather asks Open-Meteo for the model the settings pick', async ({ page }) => {
+  const now = new Date();
+  const hour = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}T${String(now.getHours()).padStart(2, '0')}:00`;
+  const urls = [];
+  await page.route('https://api.open-meteo.com/**', (route) => {
+    const model = new URL(route.request().url()).searchParams.get('models');
+    urls.push(model);
+    const t = model === 'gfs_seamless' ? 19 : 21;
+    route.fulfill({ json: {
+      current: { time: hour, temperature_2m: t, apparent_temperature: t, weather_code: 3, is_day: 0 },
+      daily: { time: [hour.slice(0, 10)], weather_code: [3], temperature_2m_max: [22], temperature_2m_min: [17], precipitation_probability_max: [0] },
+      hourly: { time: [hour], weather_code: [3], temperature_2m: [t], precipitation_probability: [0], is_day: [0] },
+    } });
+  });
+  const widgets = [{ ...widget('clock', { weather: true }), h: 2 }];
+  await layout(page, widgets, { weather: { city: 'Alpha', lat: 10, lon: 10, model: 'gfs_seamless' } });
+  await expect(page.locator('.wx-temp')).toHaveText('19°');
+  expect(urls).toEqual(['gfs_seamless']);
+
+  await page.evaluate(async () => {
+    const c = JSON.parse(localStorage.getItem('pb-demo-config'));
+    localStorage.setItem('pb-demo-config', JSON.stringify({ ...c, weather: { ...c.weather, model: '' } }));
+    const m = await import('./main.js');
+    await m.loadConfig();
+  });
+  await expect(page.locator('.wx-temp')).toHaveText('21°');
+  expect(urls).toEqual(['gfs_seamless', null]);
+});
+
+// Météo-France and CMA forecast fewer than 7 days and send null for the days after: the forecast stops at the last
+// real day instead of showing "0° 0°" (Math.round(null)) under a blank icon.
+test('a forecast whose last days are null shows only the days it has', async ({ page }) => {
+  const now = new Date();
+  const day = (k) => { const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + k, 12); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+  const hour = `${day(0)}T${String(now.getHours()).padStart(2, '0')}:00`;
+  const days = [0, 1, 2, 3, 4, 5, 6].map(day);
+  await page.route('https://api.open-meteo.com/**', (route) => route.fulfill({ json: {
+    current: { time: hour, temperature_2m: 12, apparent_temperature: 12, weather_code: 3, is_day: 1 },
+    daily: { time: days, weather_code: [3, 3, 3, 3, null, null, null], temperature_2m_max: [14, 15, 16, 17, null, null, null],
+      temperature_2m_min: [8, 9, 10, 11, null, null, null], precipitation_probability_max: [null, null, null, null, null, null, null] },
+    hourly: { time: [hour], weather_code: [3], temperature_2m: [12], precipitation_probability: [null], is_day: [1] },
+  } }));
+  await layout(page, [{ ...widget('forecast', { mode: 'daily' }), w: 12, h: 3 }], { weather: { city: 'Alpha', lat: 10, lon: 10, model: 'meteofrance_seamless' } });
+  await expect(page.locator('.fc-v').first()).toHaveText('14° 8°');
+  await expect(page.locator('.fc-v')).toHaveCount(4);
+  await expect(page.locator('.fc-v', { hasText: /^0°/ })).toHaveCount(0);
 });
 
 // PRIVACY.md: the phone sends the weather location to Open-Meteo only while a page has a widget that uses the weather.
@@ -726,3 +776,245 @@ test('the Trackpad widget sends a tap through the phone bridge when mouse contro
   expect(errors).toEqual([]);
   await ctx.close();
 });
+
+// Three or four fingers make a gesture, as on a Mac's trackpad; the agent decides what it does from the Mac's own settings.
+test('the Trackpad widget sends multi-finger gestures: swipes, spread and pinch', async ({ browser, baseURL }) => {
+  const ctx = await browser.newContext({ baseURL, viewport: { width: 780, height: 360 } });
+  await ctx.addInitScript(() => {
+    window.__phoneboxKey = 'pb-key-test';
+    window.__tp = [];
+    window.Android = {
+      battery: () => '{}', version: () => 'test', haptic() {}, buzz() {}, setBrightness() {}, setVolumeKeys() {}, is24Hour: () => true,
+      transport: () => 'usb', pcs: () => '[]',
+      trackpad: (key, type) => { if (key === 'pb-key-test') window.__tp.push(type); },
+    };
+  });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+  await layout(page, [widget('trackpad', { control: true, scrollBar: 'none' })]);
+
+  // fingers land together, move through the frames (where every finger is at each step), then lift
+  const touch = (frames) => page.evaluate(async (frames) => {
+    const pad = document.querySelector('.deck-trackpad');
+    const fire = (type, id, [x, y]) => pad.dispatchEvent(new PointerEvent(type, { pointerId: id, pointerType: 'touch', clientX: x, clientY: y, bubbles: true, cancelable: true }));
+    const frame = () => new Promise((r) => setTimeout(r, 16));
+    frames[0].forEach((p, i) => fire('pointerdown', 10 + i, p));
+    for (const f of frames) { f.forEach((p, i) => fire('pointermove', 10 + i, p)); await frame(); }
+    frames.at(-1).forEach((p, i) => fire('pointerup', 10 + i, p));
+  }, frames);
+  const row = (n) => Array.from({ length: n }, (_, i) => [200 + i * 60, 180]);
+  // each finger's position over 8 steps, from where it starts
+  const lerp = (n, f) => Array.from({ length: 8 }, (_, k) => row(n).map(([x, y]) => f(x, y, (k + 1) / 8)));
+  const sent = () => page.evaluate(() => window.__tp.splice(0));
+
+  await touch(lerp(3, (x, y, t) => [x, y - 140 * t]));
+  expect(await sent()).toEqual(['swipe3up']);
+  await touch(lerp(3, (x, y, t) => [x - 150 * t, y]));
+  expect(await sent()).toEqual(['swipe3left']);
+  await touch(lerp(4, (x, y, t) => [x, y + 140 * t]));
+  expect(await sent()).toEqual(['swipe4down']);
+  // open the fingers: each moves away from the middle
+  await touch(lerp(4, (x, y, t) => [320 + (x - 320) * (1 + t), y]));
+  expect(await sent()).toEqual(['spread']);
+  await touch(lerp(5, (x, y, t) => [380 + (x - 380) * (1 - 0.5 * t), y]));
+  expect(await sent()).toEqual(['pinch']);
+
+  // two fingers still scroll and a tap is still a click: no gesture comes out of them
+  await touch(lerp(2, (x, y, t) => [x, y + 60 * t]));
+  const two = await sent();
+  expect(two.length).toBeGreaterThan(0); // the scroll did arrive
+  expect(two.every((t) => t === 'scroll')).toBe(true);
+  expect(errors).toEqual([]);
+  await ctx.close();
+});
+
+// The fingers' pointermove events arrive one at a time; a gesture is judged on all of them together, not between two.
+test('a gesture is judged on all the fingers together, and the fingers left down do nothing after it fires', async ({ browser, baseURL }) => {
+  const ctx = await browser.newContext({ baseURL, viewport: { width: 780, height: 360 } });
+  await ctx.addInitScript(() => {
+    window.__phoneboxKey = 'pb-key-test';
+    window.__tp = [];
+    window.Android = {
+      battery: () => '{}', version: () => 'test', haptic() {}, buzz() {}, setBrightness() {}, setVolumeKeys() {}, is24Hour: () => true,
+      transport: () => 'usb', pcs: () => '[]',
+      trackpad: (key, type) => { if (key === 'pb-key-test') window.__tp.push(type); },
+    };
+  });
+  const page = await ctx.newPage();
+  await layout(page, [widget('trackpad', { control: true, scrollBar: 'none' })]);
+  // steps are [type, finger, x, y], or a number of milliseconds to wait
+  const play = (steps) => page.evaluate(async (steps) => {
+    const pad = document.querySelector('.deck-trackpad');
+    for (const [type, id, x, y] of steps) {
+      if (type === 'wait') { await new Promise((r) => setTimeout(r, id)); continue; }
+      pad.dispatchEvent(new PointerEvent(type, { pointerId: id, pointerType: 'touch', clientX: x, clientY: y, bubbles: true, cancelable: true }));
+    }
+  }, steps);
+  const sent = () => page.evaluate(() => window.__tp.splice(0));
+
+  // four fingers swipe up, but the first one's move arrives alone: the centroid moved 35 px and the radius grew by a
+  // third, which would be a spread if it were judged then; judged with the others, it is the swipe it is
+  await play([
+    ['pointerdown', 40, 200, 180], ['pointerdown', 41, 260, 180], ['pointerdown', 42, 320, 180], ['pointerdown', 43, 380, 180],
+    ['pointermove', 40, 200, 40], ['pointermove', 41, 260, 40], ['pointermove', 42, 320, 40], ['pointermove', 43, 380, 40],
+    ['wait', 60],
+    ['pointerup', 40, 200, 40], ['pointerup', 41, 260, 40], ['pointerup', 42, 320, 40], ['pointerup', 43, 380, 40],
+  ]);
+  expect(await sent()).toEqual(['swipe4up']);
+
+  // the same, with a frame between the first finger's move and the others': the fingers are still judged together
+  await play([
+    ['pointerdown', 60, 200, 180], ['pointerdown', 61, 260, 180], ['pointerdown', 62, 320, 180], ['pointerdown', 63, 380, 180],
+    ['pointermove', 60, 200, 40],
+    ['wait', 60],
+    ['pointermove', 61, 260, 40], ['pointermove', 62, 320, 40], ['pointermove', 63, 380, 40],
+    ['wait', 60],
+    ['pointerup', 60, 200, 40], ['pointerup', 61, 260, 40], ['pointerup', 62, 320, 40], ['pointerup', 63, 380, 40],
+  ]);
+  expect(await sent()).toEqual(['swipe4up']);
+
+  // the fingers rest for a while before they move, and the first one moves alone: still not a spread
+  await play([
+    ['pointerdown', 70, 200, 180], ['pointerdown', 71, 260, 180], ['pointerdown', 72, 320, 180], ['pointerdown', 73, 380, 180],
+    ['wait', 250],
+    ['pointermove', 70, 200, 40],
+    ['wait', 60],
+    ['pointermove', 71, 260, 40], ['pointermove', 72, 320, 40], ['pointermove', 73, 380, 40],
+    ['wait', 60],
+    ['pointerup', 70, 200, 40], ['pointerup', 71, 260, 40], ['pointerup', 72, 320, 40], ['pointerup', 73, 380, 40],
+  ]);
+  expect(await sent()).toEqual(['swipe4up']);
+
+  // one finger moves and another lifts before the rest have moved: nothing is sent
+  await play([
+    ['pointerdown', 80, 200, 180], ['pointerdown', 81, 260, 180], ['pointerdown', 82, 320, 180], ['pointerdown', 83, 380, 180],
+    ['pointermove', 80, 200, 40],
+    ['pointerup', 83, 380, 180],
+    ['wait', 60],
+    ['pointerup', 80, 200, 40], ['pointerup', 81, 260, 180], ['pointerup', 82, 320, 180],
+  ]);
+  expect(await sent()).toEqual([]);
+
+  // two fingers (the first and the last) have moved when a frame falls, the others a moment later: not a spread
+  await play([
+    ['pointerdown', 100, 200, 180], ['pointerdown', 101, 260, 180], ['pointerdown', 102, 320, 180], ['pointerdown', 103, 380, 180],
+    ['pointermove', 100, 200, 40], ['pointermove', 103, 380, 167],
+    ['wait', 40],
+    ['pointermove', 101, 260, 40], ['pointermove', 102, 320, 40], ['pointermove', 103, 380, 40],
+    ['wait', 40],
+    ['pointerup', 100, 200, 40], ['pointerup', 101, 260, 40], ['pointerup', 102, 320, 40], ['pointerup', 103, 380, 40],
+  ]);
+  expect(await sent()).toEqual(['swipe4up']);
+
+  // the same two fingers moved and the others never do (the first went up, the last barely moved): not a spread, whether
+  // the fingers stay down for a while or lift at once
+  await play([
+    ['pointerdown', 120, 200, 180], ['pointerdown', 121, 260, 180], ['pointerdown', 122, 320, 180], ['pointerdown', 123, 380, 180],
+    ['pointermove', 120, 200, 40], ['pointermove', 123, 380, 167],
+    ['wait', 150],
+  ]);
+  expect(await sent()).toEqual([]);
+  await play([['pointerup', 120, 200, 40], ['pointerup', 121, 260, 180], ['pointerup', 122, 320, 180], ['pointerup', 123, 380, 167], ['wait', 60]]);
+  expect(await sent()).toEqual([]);
+  await play([
+    ['pointerdown', 130, 200, 180], ['pointerdown', 131, 260, 180], ['pointerdown', 132, 320, 180], ['pointerdown', 133, 380, 180],
+    ['pointermove', 130, 200, 40], ['pointermove', 133, 380, 167],
+    ['pointerup', 133, 380, 167], ['pointerup', 130, 200, 40], ['pointerup', 131, 260, 180], ['pointerup', 132, 320, 180],
+    ['wait', 150],
+  ]);
+  expect(await sent()).toEqual([]);
+
+  // a spread is sent when the fingers stop, with all of them still down, and not again when they lift
+  await play([
+    ['pointerdown', 110, 200, 180], ['pointerdown', 111, 260, 180], ['pointerdown', 112, 320, 180], ['pointerdown', 113, 380, 180],
+    ['pointermove', 110, 140, 180], ['pointermove', 111, 230, 180], ['pointermove', 112, 350, 180], ['pointermove', 113, 440, 180],
+    ['wait', 40],
+  ]);
+  expect(await sent()).toEqual([]); // still moving, as far as it can tell
+  await play([['wait', 150]]);
+  expect(await sent()).toEqual(['spread']);
+  await play([['pointerup', 110, 140, 180], ['pointerup', 111, 230, 180], ['pointerup', 112, 350, 180], ['pointerup', 113, 440, 180], ['wait', 60]]);
+  expect(await sent()).toEqual([]);
+
+  // a real spread where the two inner fingers rest and the outer two move apart is not lost
+  await play([
+    ['pointerdown', 90, 200, 180], ['pointerdown', 91, 260, 180], ['pointerdown', 92, 320, 180], ['pointerdown', 93, 380, 180],
+    ['pointermove', 90, 120, 180], ['pointermove', 93, 460, 180],
+    ['pointerup', 90, 120, 180], ['pointerup', 91, 260, 180], ['pointerup', 92, 320, 180], ['pointerup', 93, 460, 180],
+  ]);
+  expect(await sent()).toEqual(['spread']);
+
+  // after a swipe, lifting one finger and moving the others sends neither a move nor a scroll
+  await play([
+    ['pointerdown', 50, 200, 200], ['pointerdown', 51, 260, 200], ['pointerdown', 52, 320, 200],
+    ['pointermove', 50, 200, 60], ['pointermove', 51, 260, 60], ['pointermove', 52, 320, 60],
+    ['wait', 60],
+    ['pointerup', 52, 320, 60],
+    ['pointermove', 50, 210, 90], ['pointermove', 51, 270, 90], ['wait', 60],
+    ['pointermove', 50, 220, 120], ['pointermove', 51, 280, 120], ['wait', 60],
+    ['pointerup', 51, 280, 120],
+    ['pointermove', 50, 240, 160], ['wait', 60],
+    ['pointerup', 50, 240, 160],
+  ]);
+  expect(await sent()).toEqual(['swipe3up']);
+  await ctx.close();
+});
+
+// "Haptic feedback" sets how strong the vibrations are, "Tick while scrolling" turns the scroll ticks on (off by default). The
+// gestures vibrate only for a Mac, and everything goes through the panel's buzz(): night mode and the display's vibration
+// switch silence it.
+for (const { options, os = 'macos', extra, click, gesture, scroll } of [
+  { options: {}, click: '0,14', gesture: '0,20,45,20', scroll: null },
+  { options: { scrollHaptics: true }, click: '0,14', gesture: '0,20,45,20', scroll: '0,8' },
+  { options: { haptics: 'strong', scrollHaptics: true }, click: '0,25', gesture: '0,36,45,36', scroll: '0,14' },
+  { options: { haptics: 'light', scrollHaptics: true }, click: '0,8', gesture: '0,12,45,12', scroll: '0,5' },
+  { options: { haptics: 'off', scrollHaptics: true }, click: null, gesture: null, scroll: null },
+  { options: { scrollHaptics: true }, os: 'windows', click: '0,14', gesture: null, scroll: '0,8' },
+  { options: { scrollHaptics: true }, os: 'linux', click: '0,14', gesture: null, scroll: '0,8' },
+  { options: { scrollHaptics: true }, extra: { display: { vibrate: false } }, click: null, gesture: null, scroll: null },
+]) {
+  test(`the Trackpad widget vibrates for a click, a gesture and a scroll as set: ${JSON.stringify(options)} on ${os}${extra ? ' with vibration off' : ''}`, async ({ browser, baseURL }) => {
+    const ctx = await browser.newContext({ baseURL, viewport: { width: 780, height: 360 } });
+    await ctx.addInitScript((os) => {
+      window.__phoneboxKey = 'pb-key-test';
+      window.__demoOs = os;
+      window.__feel = [];
+      window.Android = {
+        battery: () => '{}', version: () => 'test', haptic() { window.__feel.push('tick'); }, buzz(key, p) { window.__feel.push(p); },
+        setBrightness() {}, setVolumeKeys() {}, is24Hour: () => true, transport: () => 'usb', pcs: () => '[]',
+        trackpad() {},
+      };
+    }, os);
+    const page = await ctx.newPage();
+    await layout(page, [widget('trackpad', { control: true, scrollBar: 'none', ...options })], extra);
+    const feel = async (act) => {
+      await page.evaluate(() => { window.__feel.length = 0; });
+      await act();
+      return page.evaluate(() => window.__feel);
+    };
+    expect(await feel(() => page.locator('.deck-trackpad').click())).toEqual(click ? [click] : []);
+    expect(await feel(() => page.evaluate(() => {
+      const pad = document.querySelector('.deck-trackpad');
+      const fire = (type, id, x, y) => pad.dispatchEvent(new PointerEvent(type, { pointerId: id, pointerType: 'touch', clientX: x, clientY: y, bubbles: true, cancelable: true }));
+      [0, 1, 2].forEach((i) => fire('pointerdown', 20 + i, 200 + i * 60, 200));
+      [0, 1, 2].forEach((i) => fire('pointermove', 20 + i, 200 + i * 60, 40));
+      [0, 1, 2].forEach((i) => fire('pointerup', 20 + i, 200 + i * 60, 40));
+      return new Promise((r) => setTimeout(r, 60)); // a gesture is judged once per frame
+    }))).toEqual(gesture ? [gesture] : []);
+    // two fingers scrolling: a light tick for every notch
+    const scrolled = await feel(() => page.evaluate(async () => {
+      const pad = document.querySelector('.deck-trackpad');
+      const fire = (type, id, x, y) => pad.dispatchEvent(new PointerEvent(type, { pointerId: id, pointerType: 'touch', clientX: x, clientY: y, bubbles: true, cancelable: true }));
+      [0, 1].forEach((i) => fire('pointerdown', 30 + i, 200 + i * 60, 100));
+      for (let step = 1; step <= 20; step++) {
+        [0, 1].forEach((i) => fire('pointermove', 30 + i, 200 + i * 60, 100 + step * 8));
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      [0, 1].forEach((i) => fire('pointerup', 30 + i, 200 + i * 60, 260));
+    }));
+    if (scroll) { expect(scrolled.length).toBeGreaterThan(1); expect(new Set(scrolled)).toEqual(new Set([scroll])); }
+    else expect(scrolled).toEqual([]);
+    await ctx.close();
+  });
+}

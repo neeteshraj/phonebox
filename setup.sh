@@ -151,6 +151,9 @@ latest_version() {
   printf '%s' "$v"
 }
 
+designated() { # designated binary -> its designated requirement (what macOS ties permissions to), or nothing
+  codesign -d -r- "$1" 2>&1 | sed -n 's/^designated => //p'
+}
 unzip_to() { # unzip_to zip dir
   mkdir -p "$2"
   if have unzip; then unzip -q -o "$1" -d "$2"
@@ -256,6 +259,7 @@ offer_extras() {
 # ---- agent ------------------------------------------------------------------------------------------------------
 unit="$HOME/.config/systemd/user/phonebox.service"   # where scripts/uninstall.sh looks
 plist="$HOME/Library/LaunchAgents/net.oxog.phonebox.agent.plist"
+app_login_plist="$HOME/Library/LaunchAgents/net.oxog.phonebox.app.plist"   # written by the menu bar item in PhoneBox.app
 
 systemd_user() { have systemctl && systemctl --user show-environment >/dev/null 2>&1; }
 
@@ -268,6 +272,11 @@ remove_autostart() {
   if [ "$os" = osx ] && [ -f "$plist" ]; then
     rm -f "$plist"
     info 'Removed the login item; PhoneBox no longer starts at login.'
+  fi
+  # PhoneBox.app's own "Start at Login" (menu bar): without autostart it must not start PhoneBox at login either
+  if [ "$os" = osx ] && [ -f "$app_login_plist" ]; then
+    rm -f "$app_login_plist"
+    info 'Removed the app'"'"'s "Start at Login"; PhoneBox no longer starts at login.'
   fi
 }
 
@@ -331,6 +340,7 @@ EOF
     ok "systemd user service: $unit"
   else
     mkdir -p "$(dirname "$plist")"
+    rm -f "$app_login_plist"   # PhoneBox.app's "Start at Login": this agent replaces it, two would start two instances
     cat > "$plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -511,7 +521,8 @@ main() {
   chmod +x "$tmp/agent/PhoneBoxAgent"
   if [ "$os" = osx ]; then
     xattr -dr com.apple.quarantine "$tmp/agent" 2>/dev/null || true
-    # release binaries are signed ad hoc; Apple silicon refuses to run a binary without any signature
+    # release binaries are signed (with PhoneBox's own certificate since 0.9.22, ad hoc before); Apple silicon refuses
+    # to run a binary without any signature
     codesign --verify "$tmp/agent/PhoneBoxAgent" >/dev/null 2>&1 || codesign --force --sign - "$tmp/agent/PhoneBoxAgent" >/dev/null 2>&1 || true
   fi
   local out
@@ -528,8 +539,15 @@ main() {
     info "Found an existing install in $app: it is replaced; settings stay."
   fi
   if [ "$os" = osx ]; then
-    info 'The agent is signed ad hoc, not with an Apple Developer ID, so macOS may ask about it the first time:'
-    info 'allow it to control Music or Spotify (Now Playing) and, once Wi-Fi is on, to accept incoming connections.'
+    info 'The agent is signed with its own certificate, not an Apple Developer ID, so macOS may ask about it the first'
+    info 'time: allow it to control Music or Spotify (Now Playing) and, once Wi-Fi is on, to accept incoming connections.'
+    # macOS ties the Accessibility permission to the signature's designated requirement: the same from release to
+    # release since 0.9.22, but different from an older (ad hoc) build's, which changed with every build (#269)
+    if [ -n "$installed" ] && [ "$(designated "$app/PhoneBoxAgent")" != "$(designated "$tmp/agent/PhoneBoxAgent")" ]; then
+      info 'If you allowed it under Accessibility (shortcuts that press keys), allow it once more: macOS does not apply'
+      info 'that to this build. In System Settings › Privacy & Security › Accessibility, remove PhoneBoxAgent with −'
+      info 'and add it again. Later updates keep the permission.'
+    fi
   fi
 
   step 'Checking adb (needed for the USB connection to the phone)'

@@ -120,6 +120,7 @@ EOF
     echo "==> Adding a launchd agent (starts at login)"
     plist="$HOME/Library/LaunchAgents/net.oxog.phonebox.agent.plist"
     mkdir -p "$(dirname "$plist")"
+    rm -f "$(dirname "$plist")/net.oxog.phonebox.app.plist"   # PhoneBox.app's "Start at Login": this agent replaces it
     cat > "$plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

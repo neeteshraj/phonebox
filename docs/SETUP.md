@@ -38,8 +38,8 @@ Setup installs the [latest release](https://github.com/ersinkoc/phonebox/release
    | Linux | `~/.local/share/PhoneBox/app` | `~/.config/PhoneBox` |
    | macOS | `~/Library/Application Support/PhoneBox/app` | `~/Library/Application Support/PhoneBox` |
 
-   Then it asks whether to start PhoneBox at login: a Startup-folder shortcut on Windows, a systemd user service
-   on Linux, a launchd agent on macOS.
+   It adds a Start Menu shortcut on Windows, and asks whether to start PhoneBox at login: a Startup-folder shortcut
+   on Windows, a systemd user service on Linux, a launchd agent on macOS.
 6. **Puts the app on the phone over USB**, if you want. It shows how to turn on USB debugging and waits for the phone.
 7. **Starts the agent** and opens its settings at <http://127.0.0.1:8765>.
 
@@ -76,12 +76,12 @@ curl -fsSL https://raw.githubusercontent.com/ersinkoc/phonebox/main/setup.sh | b
 
 <details><summary><b>Before you run it: warnings</b></summary>
 
-- **The Windows agent is not code-signed yet.** The [SignPath Foundation](../README.md#code-signing-policy) application is pending.
+- **The Windows agent is not code-signed yet.** [SignPath Foundation](../README.md#code-signing-policy) accepted the project; releases are signed once its release certificate is issued.
   Windows SmartScreen or an antivirus may warn about a new, unsigned program, and some antivirus engines have flagged
   it ([#69](https://github.com/ersinkoc/phonebox/issues/69)). Setup only installs a file that matches the release
   checksum. If your antivirus removes `PhoneBoxAgent.exe`, setup says so; restore it from quarantine or report it.
 - **Smart App Control** (Windows 11) blocks programs that are neither signed nor known to Microsoft. The agent is
-  not code-signed yet (signing through SignPath Foundation is pending, [#56](https://github.com/ersinkoc/phonebox/issues/56)),
+  not code-signed yet (signing through SignPath Foundation waits for its release certificate, [#56](https://github.com/ersinkoc/phonebox/issues/56)),
   so with Smart App Control on, Windows refuses to start it: "An Application Control policy has blocked this file"
   ([#69](https://github.com/ersinkoc/phonebox/issues/69)). Setup warns you first, still installs it, and explains
   if Windows blocks it. Please keep Smart App Control on: on older Windows builds it cannot be turned back on without
@@ -96,8 +96,29 @@ curl -fsSL https://raw.githubusercontent.com/ersinkoc/phonebox/main/setup.sh | b
 - **Linux USB permissions**: if `adb devices` shows `no permissions`, adb also needs udev rules. Install
   `android-sdk-platform-tools-common` on Debian/Ubuntu or `android-udev` on Arch. Some systems also need the
   `plugdev` group (`sudo usermod -aG plugdev $USER`, then log out and in). Setup points this out when it happens.
-- **On macOS**, the agent is signed ad hoc, not with an Apple Developer ID. The first time, macOS may ask whether
-  it may control Music or Spotify (for Now Playing), or accept incoming connections (with Wi-Fi on).
+- **Linux shortcuts that type or press keys** use `xdotool` on X11. On Wayland they use `wtype` (wlroots, KDE) or
+  `ydotool` (GNOME, which takes neither of the others). PhoneBox uses ydotool 0.1.x (Ubuntu 24.04's `ydotool`
+  package, `sudo apt install ydotool`; 1.x isn't supported yet), which needs no `ydotoold` but needs write access to
+  `/dev/uinput`. Give that access through a group of its own, not `input`: the `input` group can usually also read
+  the real keyboards (`/dev/input/event*`), and with them every password typed. For example:
+  `sudo groupadd --system uinput`, the udev rule `KERNEL=="uinput", GROUP="uinput", MODE="0660",
+  OPTIONS+="static_node=uinput"` in `/etc/udev/rules.d/60-uinput.rules`, `sudo usermod -aG uinput $USER`, then
+  restart. Any program you run can then send key presses and mouse input, as PhoneBox does. ydotool presses the keys
+  of a US layout, so on other layouts some characters come out different, and it types only ASCII.
+- **On macOS**, the agent is signed with PhoneBox's own certificate, not an Apple Developer ID. The first time,
+  macOS may ask whether it may control Music or Spotify (for Now Playing), or accept incoming connections (with Wi-Fi
+  on). Shortcuts that press keys, and the Trackpad widget (its mouse events and its gestures), need *System Settings ›
+  Privacy & Security › Accessibility* for PhoneBoxAgent; it
+  carries over to later updates. Before 0.9.22 the agent was signed ad hoc, and macOS dropped the permission with every
+  update, so after updating from an older version allow it once more: remove PhoneBoxAgent there with *−* and add it
+  again, even if it is listed and switched on ([#269](https://github.com/ersinkoc/phonebox/issues/269)).
+- **The macOS app lives in the menu bar.** Running as `PhoneBox.app` it has no Dock icon or window; a phone icon in the
+  menu bar shows whether the phone is connected and offers Open Settings, Check for Updates (and Install update when
+  there is one), Restart Agent, Show Log, Open Config Folder, Start at Login and Quit. Start at Login adds a launchd
+  agent (`net.oxog.phonebox.app`) that opens the app, found by its bundle identifier so moving the app does not break it,
+  at your next login; it is greyed out while `setup.sh`'s own login agent exists (and `setup.sh` removes this one, so the
+  two never both start). Quitting from the system (logout, `osascript`) stops the agent the same way the menu's Quit does. The agent started by `setup.sh` or from a terminal has no menu bar icon; `--menu-bar` adds one,
+  `--no-menu-bar` (or `PHONEBOX_NO_MENU_BAR=1`) removes it from the app.
 - **Windows USB drivers**: if the phone never appears, Windows may need its USB driver. Google phones use the
   Google USB Driver; other brands have one on their support site.
 - **Scoop users**: setup stops if PhoneBox is installed with Scoop, so two copies don't fight over the same port.
@@ -127,7 +148,13 @@ The settings are at <http://127.0.0.1:8765>, on Windows also from the tray icon.
 
 - **Manual download**: the [release](https://github.com/ersinkoc/phonebox/releases/latest) has the signed Android
   APK and agents for Windows x64, Linux x64/ARM64 and macOS Apple silicon/Intel, with SHA-256 checksums and build
-  provenance. Unzip the agent and run it. It can update itself only from the install folder in the table above.
+  provenance. Unzip the agent and run it. It can update itself only from the install folder in the table above. On a Mac,
+  the `.dmg` holds `PhoneBox.app`: drag it to Applications (or `~/Applications`) and open it. It has no window; the settings
+  are at http://127.0.0.1:8765. If you installed with `setup.sh`, that agent is already running and holds the port, so first quit it
+  and run `launchctl unload ~/Library/LaunchAgents/net.oxog.phonebox.agent.plist` (otherwise opening the app only reopens its settings,
+  and the login job starts the old agent again). It is not notarized, so macOS blocks it the first time: open it once, then allow it in *System Settings › Privacy &
+  Security › Open Anyway* (right-click › Open works only up to macOS 14). The Accessibility permission is recorded per
+  app, so allow PhoneBox there once more when you move between this app and an agent started from the zip or `setup.sh`.
 - **Scoop** (Windows), which can then put the app on the phone from *Settings › General › Install the phone app*:
 
   ```powershell
@@ -137,6 +164,13 @@ The settings are at <http://127.0.0.1:8765>, on Windows also from the tray icon.
 
 - **winget**: a package (`ersinkoc.PhoneBox`) is prepared in [`packaging/winget`](../packaging/winget) for
   winget-pkgs. Once it is accepted, `winget install ersinkoc.PhoneBox` will install it.
+- **Windows installer**: `PhoneBox-<version>-win-x64-setup.exe` on the release installs for the current user (no
+  administrator), into the folder the agent updates itself in, with a Start Menu shortcut and an optional *Start PhoneBox
+  with Windows*. Uninstall it from *Settings › Apps*; your settings are kept. The agent updates itself from the release,
+  so *Apps & features* keeps showing the version the installer wrote (the one first installed); *Settings › General ›
+  Updates* shows the running one. Run again with nothing ticked to turn *Start with Windows* off (a silent run with no
+  `/TASKS=` or `/MERGETASKS=` leaves it as it is). The installer is not code-signed, and neither is the agent yet (see
+  above), so SmartScreen may ask once: *More info › Run anyway*.
 - **From source** (for development): needs the [.NET 10 SDK](https://dotnet.microsoft.com/download) and `adb`. To build
   the phone app it also needs **JDK 17** and **Android SDK Platform 35** (for example through Android Studio), with
   `JAVA_HOME` set and `ANDROID_HOME` or `android/local.properties` (`sdk.dir`) pointing at the SDK.
@@ -153,7 +187,8 @@ The settings are at <http://127.0.0.1:8765>, on Windows also from the tray icon.
 
 ### Stop and start the agent
 
-On Windows, use **Quit** in the tray menu; with **Start with Windows** on, it starts again at the next sign-in.
+On Windows, use **Quit** in the tray menu. Start it again from the Start Menu (search for **PhoneBox**); with
+**Start with Windows** on, it also starts at the next sign-in.
 On Linux, setup installs a systemd user service named `phonebox` (no sudo needed):
 
 ```sh
@@ -186,8 +221,9 @@ deletes the settings, and `-Apk` / `--apk` removes the app from the connected ph
 |---|---|---|---|
 | CPU, RAM, network, disks, ping | ✓ | ✓ | ✓ |
 | CPU temperature | LibreHardwareMonitor | ✓ (hwmon) | — |
+| CPU power | LibreHardwareMonitor | RAPL, where the agent may read it (most distributions allow only root) | — |
 | GPU load, VRAM, temperature | Any vendor (Windows GPU counters); NVIDIA adds power, fan and clocks (`nvidia-smi`), AMD / Intel add them with LibreHardwareMonitor | NVIDIA (`nvidia-smi`), AMD (`amdgpu` sysfs), Intel (`i915` / `xe`: load and clock) | Apple silicon (`ioreg`) |
-| Now playing + controls | ✓ (any app) | ✓ (MPRIS via `playerctl`) | System media, including browser video, with `nowplaying-cli`; Spotify and Music fallback |
+| Now playing + controls | ✓ (apps in Windows' media controls) | ✓ (MPRIS via `playerctl`) | System media, including browser video, with `nowplaying-cli`; Spotify and Music fallback |
 | Volume | ✓ | ✓ (`wpctl` / `pactl`) | ✓ |
 | Processes, end one / all | ✓ | ✓ (your own) | ✓ (your own) |
 | App icons | ✓ | ✓ (icon theme) | ✓ (app bundles) |
@@ -196,6 +232,8 @@ deletes the settings, and `-Apk` / `--apk` removes the app from the connected ph
 | Claude / Codex quotas & sessions, GitHub, webhooks | ✓ | ✓ | ✓ (Claude token from the Keychain) |
 | Tray icon | ✓ | — (settings in the browser) | — |
 | Start at login | Startup folder | systemd user service | launchd agent |
+
+On Windows, Now playing shows the apps that appear in Windows' own media controls (the panel above the volume in Quick Settings): Spotify, browsers, Media Player and most streaming apps. A player that does not report itself there, such as VLC 3, stays blank on the phone. While no other app is in those controls, play / pause sends the keyboard's media key, which such a player may act on (VLC does when its media keys are global hotkeys or it is in front), but the phone cannot tell whether it plays.
 
 On macOS, `nowplaying-cli` supplies system media metadata and cover art. The agent labels matching Safari or Chrome tabs as YouTube or YouTube Music. The progress bar advances from the last position supplied by macOS; Safari may report an outdated starting position. Volume follows the selected system output. When macOS does not expose its volume, an optional `m1ddc` installation can read it from a compatible display; display volume is read only in PhoneBox. Unsupported outputs show `n/a`. Apple silicon GPU usage comes from IORegistry when macOS exposes it; temperature, power and VRAM figures may remain unavailable.
 
@@ -219,7 +257,8 @@ is nothing to turn on in PhoneBox.
    sensors need it).
 2. In its menu choose **Options › Remote Web Server › Run**. The port stays **8085** (PhoneBox only looks there).
 3. Check it in a browser on the PC: <http://127.0.0.1:8085/data.json> should show a long JSON text. Within a few
-   seconds the CPU temperature and the extra GPU values appear on the phone.
+   seconds the CPU temperature, the CPU power (when your CPU reports a package power there) and the extra GPU values
+   appear on the phone.
 4. To keep it running: **Options › Start Minimized**, **Minimize To Tray** and **Run On Windows Startup**.
 
 The web server answers on every network the PC is on. If Windows Firewall asks, PhoneBox only needs it on this
@@ -267,6 +306,9 @@ phone; over Wi-Fi the panel shows "plug in USB to update") and replaces its own 
 accepts an update signed with the same key as the installed app; the agent never uninstalls to force one.
 When GitHub turns away anonymous requests (it answers 503 / 504 now and then), the agent asks again with the
 [GitHub CLI](https://cli.github.com)'s token if `gh` is signed in; the token only goes to `api.github.com`.
+A Mac agent running from `PhoneBox.app` (the `.dmg` of a release) updates the same way, by replacing the whole app: it
+downloads the release's `PhoneBox-<version>-<rid>.dmg`, checks it against the release checksums and the new app's signature, swaps it
+in and restarts. The app must sit in a folder you can write to, such as `~/Applications`.
 See the [changelog](../CHANGELOG.md).
 
 ## FAQ & troubleshooting
@@ -277,6 +319,17 @@ Is the agent running (tray icon)? Run `adb devices`: the phone must be listed as
 accept the USB debugging prompt on the phone. If several devices are connected, pick the phone under
 **Settings › General › Phone connection**. Over Wi-Fi, check that Wi-Fi is enabled on the agent, pair with the
 QR code or over USB, and allow the agent through the firewall for your private network.
+
+If `adb devices` itself doesn't answer, the adb server is hung. The agent tries to restart a local adb server that has
+been hung for a minute, which also ends other tools' adb sessions (Android Studio, scrcpy). It doesn't while the phone
+app is being installed, or when `ADB_SERVER_SOCKET` or `ANDROID_ADB_SERVER_ADDRESS` points adb at a server on another
+machine, and it tries at most once every 5 minutes. It ends the server's process, found with `netstat` on Windows and
+`lsof` (or `ss` on Linux) elsewhere. When `agent.log` says the process couldn't be found and it is "only asking it to
+stop", the agent could only send `adb kill-server`, which a hung server may ignore: the restart may not have happened.
+
+To recover at once from a local adb server, end `adb.exe` in Task Manager (`pkill adb` on Linux and macOS):
+`adb kill-server` asks the server itself, so a hung one may not answer it. With `ADB_SERVER_SOCKET` or
+`ANDROID_ADB_SERVER_ADDRESS` pointing at another machine, restart the adb server on that machine instead.
 </details>
 
 <details><summary><b>The phone keeps dropping off USB.</b></summary>
@@ -284,6 +337,12 @@ QR code or over USB, and allow the agent through the firewall for your private n
 The panel carries on over Wi-Fi when Wi-Fi is on, and **Settings › General › Phone connection** says what the phone
 itself sees: if it is charging but has no USB data connection, the cable or the port only carries power — try another
 cable, or a port straight on the computer instead of a hub or a front-panel port. Updates of the phone app need USB.
+
+On some Samsung phones the USB data link restarts each time charging stops, starts or changes speed, and adb sees
+the phone go away for a few seconds. **Protect battery** (charging stops at 85 % and starts again below it) does
+this every few minutes, and fast charging can too. Turning Protect battery off made the drops rare on a Galaxy A31
+(Android 11), but not gone ([#410](https://github.com/ersinkoc/phonebox/issues/410)); there, Wi-Fi with the phone on
+a charger of its own works without drops.
 </details>
 
 <details><summary><b>Some widgets show "—" or "No data".</b></summary>
@@ -299,6 +358,27 @@ certificate authority its certificate chains to (Let's Encrypt's ISRG Root X1). 
 [letsencrypt.org/certificates](https://letsencrypt.org/certificates/), rename it to `isrgrootx1.crt`, and install it
 under **Settings › Security › Install from device storage**. The panel itself talks to the computer and is not
 affected. Thanks to [phongnguyen2277](https://github.com/phongnguyen2277) for finding this (#184).
+</details>
+
+<details><summary><b>On an x86 tablet the panel asks for a newer WebView, and the Play Store has none.</b></summary>
+
+Some older tablets have an Intel (x86) processor, such as the Galaxy Tab 3 10.1 (GT-P5200). On the one we tried, the
+Play Store offered no WebView or Chrome newer than 101, below the 105 the panel needs to scale widgets. On a rooted
+device running LineageOS 14.1 (Android 7), LineageOS's own x86 WebView can replace the system one:
+
+1. Take `webview.apk` from the commit with
+   [WebView 119.0.6045.134](https://github.com/LineageOS/android_external_chromium-webview_prebuilt_x86/tree/91c9fde9772f760daebb73402e5f3dce9808f427)
+   (the APK is stored with Git LFS). 119 is the last Chromium for Android 7: from 120 on, WebView needs Android 8.0
+   (API 26), and the newer builds on that repository's default branch will not run on Android 7.
+2. Keep a copy of `/system/app/webview/webview.apk`, put the new APK in its place and restart the tablet.
+   `adb install -r` cannot do this, because the new APK is signed with a different key than the system one.
+3. On Android 7 to 9, Chrome can be the active WebView, and then replacing the system one changes nothing. Open
+   **Developer options › WebView implementation**, pick *Android System WebView* (or disable Chrome), and check that
+   the version is 105 or later under **Settings › Apps › Android System WebView**; the panel's update notice also
+   goes away.
+
+This worked on a GT-P5200 with LineageOS 14.1 (Android 7.1.2), where Chrome 101 is installed next to it. Without root
+there is no newer WebView for these devices.
 </details>
 
 <details><summary><b>I want the volume keys to change the phone's volume.</b></summary>

@@ -25,11 +25,14 @@ public sealed record QuotaProvider(string Id, string Name, string Plan, IReadOnl
 /// <summary>
 /// Collects quota usage of AI subscriptions:
 ///  - Claude: api.anthropic.com/api/oauth/usage with the OAuth token from ~/.claude/.credentials.json (on macOS, when
-///    that file doesn't exist, the "Claude Code-credentials" item from the default keychain search list, normally the login Keychain)
+///    that file doesn't exist or its token is missing or expired, the "Claude Code-credentials" item from the default
+///    keychain search list, normally the login Keychain, if its token expires later)
 ///    (the endpoint behind Claude Code's /usage command). The token is only read and NEVER refreshed;
 ///    Claude Code refreshes it itself (refreshing it here could break Claude Code's session).
-///  - Codex: the last "rate_limits" record in the newest rollout file under ~/.codex/sessions (fully local).
+///  - Codex: live account quota through the signed-in Codex CLI app-server, with local session logs as fallback.
 ///  - Antigravity: a running local server, or the signed-in agy CLI's structured /usage command.
+///  - Grok: cli-chat-proxy.grok.com with the bearer from ~/.grok/auth.json (GROK_HOME overrides that folder).
+///    The token is only read and never refreshed; the Grok CLI refreshes it itself.
 /// </summary>
 public sealed partial class QuotaMonitor(ConfigStore config, ILogger<QuotaMonitor> log) : BackgroundService
 {
@@ -56,6 +59,82 @@ public sealed partial class QuotaMonitor(ConfigStore config, ILogger<QuotaMonito
 
     /// <summary>Claude Code's credentials file (read only). Tests point it at a file of their own.</summary>
     internal string CredentialsPath { get; init; } = DefaultCredentialsPath;
+
+    /// <summary>
+    /// The credentials files of Claude Code inside the running WSL distros, when WSL watching is on for Claude Code
+    /// (Windows only). Tests give a finder of their own.
+    /// </summary>
+    internal Func<IEnumerable<string>>? FindWslCredentials { get; init; }
+
+    /// <summary>Whether a credentials file holds a Claude Code sign-in (an access token), not just a plan.</summary>
+    internal static bool HasCliSignIn(string? json)
+    {
+        if (string.IsNullOrEmpty(json)) return false;
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            return doc.RootElement.ValueKind == JsonValueKind.Object
+                && doc.RootElement.TryGetProperty("claudeAiOauth", out var o) && o.ValueKind == JsonValueKind.Object
+                && o.TryGetProperty("accessToken", out var t) && t.ValueKind == JsonValueKind.String && t.GetString() is { Length: > 0 };
+        }
+        catch (JsonException) { return false; }
+    }
+
+    /// <summary>Each running distro's credentials file with its distro (tests give paths without one, and no check).</summary>
+    private IEnumerable<(string? Distro, string Path)> WslCredentialsPaths()
+    {
+        if (FindWslCredentials is not null) return FindWslCredentials().Select(p => ((string?)null, p));
+        if (config?.Get().Claude.WatchWsl != true) return [];
+        return WslHomes.Running().Select(wsl => ((string?)wsl.Distro, Path.Combine(wsl.Home, ".claude", ".credentials.json")));
+    }
+
+    /// <summary>
+    /// Reads Claude Code's macOS Keychain item; null uses the `security` tool, and only for the default credentials path
+    /// on macOS. Tests give a reader of their own so nothing here touches the real Keychain.
+    /// </summary>
+    internal Func<string?>? ReadKeychain { get; init; }
+
+    private Func<string?>? KeychainReader()
+    {
+        if (ReadKeychain is not null) return ReadKeychain;
+#if !WINDOWS
+        if (OperatingSystem.IsMacOS() && CredentialsPath == DefaultCredentialsPath)
+            return () => Sh.Run("security", "find-generic-password", "-s", "Claude Code-credentials", "-w")?.Trim();
+#endif
+        return null;
+    }
+
+    /// <summary>The expiry of a Claude Code sign-in with an access token (0 when it has none), or null without one.</summary>
+    internal static long? SignInExpiry(string? json)
+    {
+        if (string.IsNullOrEmpty(json)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object
+                || !doc.RootElement.TryGetProperty("claudeAiOauth", out var o) || o.ValueKind != JsonValueKind.Object
+                || string.IsNullOrEmpty(Str(o, "accessToken"))) return null;
+            return o.TryGetProperty("expiresAt", out var e) && e.ValueKind == JsonValueKind.Number && e.TryGetInt64(out var ms) ? ms : 0;
+        }
+        catch (JsonException) { return null; }
+    }
+
+    /// <summary>
+    /// Of the credentials file and the Keychain item, the sign-in whose token expires later. Claude Code on macOS keeps
+    /// and renews its sign-in in the Keychain, so a file another tool or an older version left behind can hold a token
+    /// that expired hours ago. Only called once the file's token is missing or expired; without a usable Keychain
+    /// sign-in the file is returned unchanged, so a half-written or signed-out file is still reported as before.
+    /// </summary>
+    internal static string? PickCredentials(string? file, string? keychain)
+    {
+        var fileExpiry = SignInExpiry(file);
+        var keychainExpiry = SignInExpiry(keychain);
+        if (keychainExpiry is null) return file;
+        if (fileExpiry is null) return keychain;
+        // 0 is "no expiry given": it is never later than a known one, and a known one never beats it
+        if (fileExpiry == 0) return file;
+        return keychainExpiry == 0 || keychainExpiry > fileExpiry ? keychain : file;
+    }
 
     /// <summary>The addresses in the order to try them: IPv4 first, each family keeping its resolver order.</summary>
     internal static IEnumerable<IPAddress> Ipv4First(IEnumerable<IPAddress> addresses) =>
@@ -112,6 +191,8 @@ public sealed partial class QuotaMonitor(ConfigStore config, ILogger<QuotaMonito
 
     private volatile QuotaProvider? _claude;
     private volatile QuotaProvider? _codex;
+    private volatile QuotaProvider? _codexLive;
+    private volatile string? _codexLiveError;
     private volatile QuotaProvider? _antigravity;
     private long _claudeNextAt;           // wall-clock ms of the next Claude request
     private int _claudeFailures;          // consecutive failed requests, for the back-off
@@ -121,22 +202,41 @@ public sealed partial class QuotaMonitor(ConfigStore config, ILogger<QuotaMonito
     private volatile QuotaOverview? _overview;
 
     /// <summary>Seeds quota state in unit tests without running background loops.</summary>
-    internal void SetStateForTest(QuotaProvider? claude = null, IReadOnlyList<QuotaProvider>? external = null)
+    internal void SetStateForTest(QuotaProvider? claude = null, IReadOnlyList<QuotaProvider>? external = null, QuotaProvider? grok = null)
     {
         _claude = claude;
         if (external is not null) _external = external;
+        if (grok is not null) _grok = grok;
     }
 
-    public IReadOnlyList<QuotaProvider> Snapshot()
+    public IReadOnlyList<QuotaProvider> Snapshot() => Snapshot(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+
+    /// <summary>The snapshot at <paramref name="now"/>; tests pass their own clock so windows roll the same way every day.</summary>
+    /// <summary>
+    /// Like <see cref="CodexBar.Select"/>, but a successful prepaid-only reading (a balance, no limits) counts as a
+    /// reading: it is not set aside for a failed or stale CodexBar answer. A fresh CodexBar reading still wins.
+    /// </summary>
+    internal static QuotaProvider? GrokSelect(QuotaProvider? local, QuotaProvider? external, long now)
     {
-        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var freshExternal = external is { Error: null, Limits.Count: > 0, UpdatedAt: { } updated } && now - updated <= CodexBar.FreshExternalMs;
+        if (!freshExternal && local is { Error: null, Limits.Count: 0, Extra: not null }) return local;
+        return CodexBar.Select(local, external, now);
+    }
+
+    internal IReadOnlyList<QuotaProvider> Snapshot(long now)
+    {
         var external = _external;
-        var core = new[] { "claude", "codex", "antigravity" }
-            .Select(id => CodexBar.Select(id == "claude" ? _claude : id == "codex" ? _codex : _antigravity,
-                external.FirstOrDefault(p => p.Id == id), now))
+        var core = new[] { "claude", "codex", "antigravity", "grok" }
+            .Select(id => id switch
+            {
+                "codex" => CodexSnapshot(now, external.FirstOrDefault(p => p.Id == id)),
+                "claude" => CodexBar.Select(_claude, external.FirstOrDefault(p => p.Id == id), now),
+                "grok" => GrokSelect(_grok, external.FirstOrDefault(p => p.Id == id), now),
+                _ => CodexBar.Select(_antigravity, external.FirstOrDefault(p => p.Id == id), now),
+            })
             .OfType<QuotaProvider>();
         var extra = external
-            .Where(p => p.Id is not ("claude" or "codex" or "antigravity"))
+            .Where(p => p.Id is not ("claude" or "codex" or "antigravity" or "grok"))
             .Select(p => CodexBar.Select(null, p, now))
             .OfType<QuotaProvider>();
         return core.Concat(extra).Select(p => Rolled(p, now)).ToList();
@@ -150,7 +250,7 @@ public sealed partial class QuotaMonitor(ConfigStore config, ILogger<QuotaMonito
             ? l with { Percent = 0, ResetsAt = null, Severity = "normal", ResetDescription = null, DeltaPercent = null, ExpectedPercent = null, PaceOnTrack = null }
             : l).ToList();
         const string reached = "Limit reached";
-        var extra = p.Extra is { } x && x.StartsWith(reached, StringComparison.Ordinal) && !limits.Any(l => l.Percent >= 100)
+        var extra = p.Source != "codex-app-server" && p.Extra is { } x && x.StartsWith(reached, StringComparison.Ordinal) && !limits.Any(l => l.Percent >= 100)
             ? (x.Length > reached.Length + 3 ? x[(reached.Length + 3)..] : null) : p.Extra;
         return p with { Limits = limits, Extra = extra };
     }
@@ -164,12 +264,65 @@ public sealed partial class QuotaMonitor(ConfigStore config, ILogger<QuotaMonito
     /// <summary>Returns the current cost overview evaluated at <paramref name="now"/>.</summary>
     internal QuotaOverview? Overview(long now) => CodexBar.SelectOverview(_overview, IsOverviewEnabled(), now);
 
+    /// <summary>Grok is polled only while an enabled page shows Grok quotas. Unit tests without a config poll it.</summary>
+    internal bool IsGrokEnabled() => config is null || config.Get().ShowGrokQuota();
+
+    /// <summary>Returns true when live Codex CLI polling is opted in and an enabled page shows Codex quotas.</summary>
+    internal bool IsCodexLiveEnabled() => config is null || (config.Get() is { } c && c.CodexBar.CodexLiveQuota && c.ShowCodexQuota());
+
+    internal const long CodexLiveIntervalMs = 180_000;
+    internal const long CodexLiveStaleMs = 360_000;
+
+    /// <summary>Exponential backoff for live Codex CLI failures: 2m, 4m, 8m, 16m, capped at 30m.</summary>
+    internal static long CodexLiveBackoffMs(int failures) =>
+        Math.Min(1_800_000L, 120_000L << Math.Clamp(failures - 1, 0, 4));
+
+    internal enum CodexLiveOutcome { Ok, Skipped, Failed }
+
     /// <summary>
-    /// Periodically refreshes local/CodexBar quota providers and gated cost overview in the background.
+    /// Periodically refreshes local/CodexBar quota providers, gated cost overview and opt-in live Codex quota in the background.
     /// </summary>
     protected override async Task ExecuteAsync(CancellationToken ct)
     {
-        await Task.WhenAll(RunUsageLoopAsync(ct), RunOverviewLoopAsync(ct));
+        await Task.WhenAll(RunUsageLoopAsync(ct), RunOverviewLoopAsync(ct), RunCodexLiveLoopAsync(ct));
+    }
+
+    private async Task RunCodexLiveLoopAsync(CancellationToken ct)
+    {
+        long next = 0;
+        var failures = 0;
+        var wakes = Wake.Count;
+        while (!ct.IsCancellationRequested)
+        {
+            if (!IsCodexLiveEnabled())
+            {
+                _codexLive = null;
+                _codexLiveError = null;
+                failures = 0;
+                next = 0;
+            }
+            else if (Environment.TickCount64 >= next || Wake.Count != wakes)
+            {
+                wakes = Wake.Count;
+                var outcome = await RefreshCodexOnceAsync(CodexQuota.Find, CodexQuota.ReadAsync, ct);
+                if (outcome == CodexLiveOutcome.Ok)
+                {
+                    failures = 0;
+                    next = Environment.TickCount64 + CodexLiveIntervalMs;
+                }
+                else if (outcome == CodexLiveOutcome.Skipped)
+                {
+                    failures = 0;
+                    next = Environment.TickCount64 + 60_000;
+                }
+                else
+                {
+                    failures++;
+                    next = Environment.TickCount64 + CodexLiveBackoffMs(failures);
+                }
+            }
+            await Wake.Delay(TimeSpan.FromSeconds(5), ct);
+        }
     }
 
     private async Task RunOverviewLoopAsync(CancellationToken ct)
@@ -256,28 +409,38 @@ public sealed partial class QuotaMonitor(ConfigStore config, ILogger<QuotaMonito
     private async Task RunUsageLoopAsync(CancellationToken ct)
     {
         LoadClaudeCache(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        var wakes = Wake.Count;
         while (!ct.IsCancellationRequested)
         {
+            // Capture before the poll so a /api/refresh during CodexBar/Claude work still ends the wait below.
+            var wake = Wake.Pending;
+            // /api/refresh (Wake.Now) must re-poll CodexBar; otherwise Cursor stays on a stale "No session" for up to 3 minutes.
+            if (Wake.Count != wakes)
+            {
+                wakes = Wake.Count;
+                _nextCodexBar = 0;
+            }
             if (Environment.TickCount64 >= _nextCodexBar)
             {
                 var path = ToolProcess.Find("codexbar");
                 try
                 {
-                    if (path is null) _external = _external.Select(p => p with { Error = "CodexBar is not installed" }).ToList();
+                    if (path is null)
+                        _external = _external.Select(p => p with { Error = "CodexBar is not installed" }).ToList();
                     else
                     {
                         var latest = await CodexBar.ReadAsync(path, ct);
-                        _external = latest.Select(p => p.Limits.Count == 0 && _external.FirstOrDefault(old => old.Id == p.Id) is { } cached
-                            ? cached with { Error = p.Error ?? "CodexBar returned no data" } : p)
-                            .Concat(_external.Where(old => !latest.Any(p => p.Id == old.Id)).Select(p => p with { Limits = [], Error = "CodexBar omitted this provider" })).ToList();
+                        _external = CodexBar.Merge(_external, latest, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
                     }
+                    // Keep the usual 3-minute interval even when Cursor fails persistently under launchd (avoids hammering Claude's rate-limited usage endpoint).
                     _nextCodexBar = Environment.TickCount64 + 180_000;
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
                 catch (Exception ex)
                 {
                     log.LogDebug("CodexBar: {Message}", ex.Message);
-                    _external = _external.Select(p => p with { Error = "CodexBar refresh failed" }).ToList();
+                    // Do not wipe last-good limits — only mark an error when there is nothing to show.
+                    _external = _external.Select(p => p.Limits.Count > 0 ? p : p with { Error = "CodexBar refresh failed" }).ToList();
                     _nextCodexBar = Environment.TickCount64 + 60_000;
                 }
             }
@@ -291,8 +454,14 @@ public sealed partial class QuotaMonitor(ConfigStore config, ILogger<QuotaMonito
 
             try { await ClaudeTickAsync(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), ct); }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
-            catch (Exception ex) { log.LogWarning("claude quota: {Msg}", ex.Message); } // never end the loop for Codex and Antigravity
-            await Wake.Delay(TimeSpan.FromSeconds(30), ct);
+            catch (Exception ex) { log.LogWarning("claude quota: {Msg}", ex.Message); } // never end the loop for Codex, Antigravity and Grok
+            try { await GrokTickAsync(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), ct); }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
+            catch (Exception ex) { log.LogWarning("grok quota: {Msg}", ex.Message); }
+            // Zero when the CodexBar deadline has already passed (do not sleep another 30 s); otherwise min(30 s, remaining).
+            var untilCodex = Math.Max(0L, _nextCodexBar - Environment.TickCount64);
+            var wait = TimeSpan.FromMilliseconds(Math.Min(30_000L, untilCodex));
+            await Wake.Delay(wait, ct, wake);
         }
     }
 
@@ -346,11 +515,29 @@ public sealed partial class QuotaMonitor(ConfigStore config, ILogger<QuotaMonito
         string? json = null;
         try { if (File.Exists(CredentialsPath)) json = await File.ReadAllTextAsync(CredentialsPath, ct); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return; }
-#if !WINDOWS
-        // macOS: Claude Code stores the credentials in the login Keychain instead of a file (read-only access).
-        if (json is null && OperatingSystem.IsMacOS() && CredentialsPath == DefaultCredentialsPath)
-            json = Sh.Run("security", "find-generic-password", "-s", "Claude Code-credentials", "-w")?.Trim();
-#endif
+        // Claude Code signed in only inside WSL (Also watch Claude Code in WSL): its sign-in there, when Windows has no
+        // file or only Claude Desktop's plan without a token. A Windows sign-in with a token always comes first.
+        if ((CredentialsPath == DefaultCredentialsPath || FindWslCredentials is not null) && !HasCliSignIn(json))
+        {
+            // the first running distro whose file holds a sign-in; one with only a plan (or unreadable) is passed over.
+            // Each distro is asked about again right before its file is read: one that stopped while an earlier file was
+            // read is skipped instead of started by the read.
+            foreach (var (distro, wsl) in WslCredentialsPaths())
+            {
+                if (distro is not null && !WslHomes.IsRunning(distro)) continue;
+                try
+                {
+                    var wslJson = await File.ReadAllTextAsync(wsl, ct);
+                    if (HasCliSignIn(wslJson)) { json = wslJson; break; }
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            }
+        }
+        // macOS: Claude Code stores the credentials in the login Keychain (read-only access). It is read when there is
+        // no file, and when the file's token is missing or expired: a stale file must not hide a renewed Keychain sign-in.
+        if (KeychainReader() is { } readKeychain
+            && (json is null || SignInExpiry(json) is not { } fileExpiry || fileExpiry > 0 && fileExpiry - nowMs < ClaudeTokenMarginMs))
+            json = PickCredentials(json, readKeychain());
         if (string.IsNullOrEmpty(json))
         {
             // Claude Code is not set up here
@@ -664,6 +851,66 @@ public sealed partial class QuotaMonitor(ConfigStore config, ILogger<QuotaMonito
             log.LogDebug("codex quota: {Msg}", ex.Message); // the log is busy for a moment; it's read again in 30 s
         }
         catch (Exception ex) { _codex = Fail("codex", "Codex", ex.Message); }
+    }
+
+    /// <summary>Refresh account-wide quota without creating a thread or inference turn.</summary>
+    internal Task<CodexLiveOutcome> RefreshCodexOnceAsync(Func<string?> findTool,
+        Func<string, CancellationToken, Task<QuotaProvider>> read, CancellationToken ct) =>
+        RefreshCodexOnceAsync(findTool, read, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), ct);
+
+    internal async Task<CodexLiveOutcome> RefreshCodexOnceAsync(Func<string?> findTool,
+        Func<string, CancellationToken, Task<QuotaProvider>> read, long now, CancellationToken ct)
+    {
+        try
+        {
+            if (!IsCodexLiveEnabled())
+            {
+                _codexLive = null;
+                _codexLiveError = null;
+                return CodexLiveOutcome.Skipped;
+            }
+            var external = _external.FirstOrDefault(p => p.Id == "codex");
+            if (external is { Error: null, Limits.Count: > 0, UpdatedAt: { } updated } && now - updated <= 600_000)
+            {
+                _codexLiveError = null;
+                return CodexLiveOutcome.Skipped;
+            }
+            var path = findTool();
+            if (path is null)
+            {
+                _codexLiveError = "Codex CLI is not installed";
+                _codexLive = null;
+                return CodexLiveOutcome.Failed;
+            }
+            _codexLive = await read(path, ct);
+            _codexLiveError = null;
+            return CodexLiveOutcome.Ok;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception ex)
+        {
+            log.LogDebug("codex live quota: {Message}", ex.Message);
+            _codexLive = null;
+            _codexLiveError = "Live Codex quota unavailable";
+            return CodexLiveOutcome.Failed;
+        }
+    }
+
+    internal QuotaProvider? CodexSnapshot(long now, QuotaProvider? external = null)
+    {
+        var local = _codex;
+        if (!IsCodexLiveEnabled())
+            return CodexBar.Select(local, external, now);
+        var live = _codexLive;
+        var fresh = live is { Error: null, Limits.Count: > 0, UpdatedAt: { } at } && now - at <= CodexLiveStaleMs;
+        var direct = fresh ? live! with { Codex = local?.Codex } : local;
+        var selected = CodexBar.Select(direct, external, now);
+        if (selected?.Source is "codex-app-server" or "codexbar") return selected;
+        var error = _codexLiveError ?? (live is not null && !fresh ? "Live Codex quota is stale" : null);
+        if (error is null) return selected;
+        return selected is { Limits.Count: > 0 }
+            ? selected with { Error = error + "; showing local session snapshot" }
+            : selected is not null ? selected with { Error = error } : Fail("codex", "Codex", error);
     }
 
     private QuotaProvider? ReadCodex()

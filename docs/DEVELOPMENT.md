@@ -17,7 +17,7 @@ flowchart LR
     Agent --- Mon["System, GPU, media, volume,<br/>processes, sessions, quotas, GitHub"]
     Agent --- Set["Settings page &<br/>layout editor"]
   end
-  Proxy -->|"USB: adb reverse → 127.0.0.1:8765"| Agent
+  Proxy -->|"USB: adb reverse → its own loopback port,<br/>pinned TLS + the app's USB key"| Agent
   Proxy -.->|"Wi-Fi / Tailscale: HTTPS :8766,<br/>pinned certificate + key"| Agent
   Hooks["Scripts, CI,<br/>Home Assistant"] -->|webhooks| Agent
 ```
@@ -86,6 +86,10 @@ dotnet run --project agent/PhoneBox.Agent -f net10.0-windows10.0.19041.0
 ```
 
 
+On macOS or Linux, `./scripts/build.sh` turns a checkout into ready-to-run files in `dist/`: a `.dmg` (PhoneBox.app) on a Mac,
+a `.tar.gz` holding one executable on Linux. Pass a target (`osx-arm64`, `osx-x64`, `linux-x64`, `linux-arm64`) or `all`.
+The Windows `.exe` is built with `build.ps1` on Windows.
+
 On Linux or macOS, run the agent with `dotnet run --project agent/PhoneBox.Agent -f net10.0` and build the APK
 with `cd android && ./gradlew assembleDebug`. On Windows, the explicit `-f` selects one of the project's two
 target frameworks. Set `ANDROID_HOME` or `android/local.properties` (`sdk.dir`) to the Android SDK location.
@@ -133,3 +137,18 @@ and `PHONEBOX_KEY_PASSWORD` are set (in `~/.gradle/gradle.properties` or the env
 is used. Debug builds make the WebView debuggable through `chrome://inspect`. To publish a release: bump the
 version in `PhoneBox.Agent.csproj` and `android/app/build.gradle.kts`, commit, then run `.\scripts\release.ps1`.
 The script dispatches the gated GitHub release workflow; see [the release checklist](RELEASING.md).
+
+## Translations
+
+The Android panel and desktop editor load the same `assets/www/i18n.js` and
+`locale-*.js` dictionaries. Use `t()` for interface keys, `tc()` for widget,
+template, and editor captions, and `tp()` for panel labels indexed by their
+English text. Preserve placeholders, HTML tags, paths, and protocol identifiers.
+Widget positions are measured from the left in both left-to-right and right-to-left interfaces.
+
+Each locale also has Android pairing strings in `res/values-*/strings.xml`, a
+Windows `TrayStrings.<culture>.resx`, and a localized README. After adding a
+language to `i18n.js`, run `python tools/sync-locales.py` to update the two
+platform lists and the README links. Add the locale's dictionary to the panel
+and editor script lists. Run `python tools/check-release.py` and the Playwright
+localization tests after changing a locale.

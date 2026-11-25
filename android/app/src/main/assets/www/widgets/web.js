@@ -1,4 +1,4 @@
-import { $, API, PANEL_HEADERS, ago, api, h, haptic, safeFetch, store, t, tick, toast } from '../main.js';
+import { $, API, PANEL_HEADERS, ago, api, h, haptic, icon, safeFetch, store, t, tick, toast, tp } from '../main.js';
 import { W } from '../registry.js';
 import { cached, every, fmtNum, lines, pctSpan, sparkLine } from './helpers.js';
 
@@ -46,13 +46,14 @@ W.feeds = {
   needs: ['tick'],
   create(box, { o }) {
     const only = String(o.feed || '').trim().toLowerCase();
+    const onlyCat = String(o.category || '').trim().toLowerCase();
     const showSource = o.showSource !== false, showTime = o.showTime !== false;
     const lineCount = ['2', '3'].includes(String(o.lines)) ? +o.lines : 1;
     const list = h('div', 'fd-list', h('div', 'empty', t('w.loading')));
     if (lineCount > 1) { list.classList.add('wrap'); list.style.setProperty('--fl', lineCount); }
     const sub = h('span', 'w-sub', '');
     box.style.setProperty('--c', '#f59e0b');
-    if (o.title !== '') box.append(h('div', 'w-title', o.title || 'News', sub));
+    if (o.title !== '') box.append(h('div', 'w-title', o.title || tp('News'), sub));
     box.append(list);
     let data = null, lastKey = '', busy = null;
     const open = async (it) => {
@@ -73,18 +74,23 @@ W.feeds = {
       finally { clearTimeout(timer); busy = null; }
     };
     const render = () => {
-      const items = (data?.items || []).filter((i) => !only || i.source.toLowerCase() === only).slice(0, FEEDS_SHOWN);
+      const items = (data?.items || []).filter((i) => {
+        if (only && i.source.toLowerCase() !== only) return false;
+        if (onlyCat && (i.category || '').toLowerCase() !== onlyCat) return false;
+        return true;
+      }).slice(0, FEEDS_SHOWN);
       const canOpen = o.open === true && !!data?.canOpen;
       const read = feedsRead();
       const key = JSON.stringify([!!data, canOpen, items.map((i) => i.id + (read.has(i.id) ? '.' : '')), data?.errors, Math.floor(Date.now() / 60_000)]);
       if (key === lastKey) return;
       lastKey = key;
       const err = (data?.errors || []).filter((e) => !only || e.toLowerCase().startsWith(only + ':'));
-      sub.textContent = err.length ? '⚠' : '';
+      sub.replaceChildren(...(err.length ? [icon('warn')] : []));
       sub.title = err.join('\n');
       if (!data) return;
       if (!items.length) {
-        list.replaceChildren(h('div', 'empty', err.length ? err[0] : data.updated && (data.items || []).length ? t('w.feeds.noneFrom', { name: o.feed }) : t('w.feeds.addInSettings')));
+        const filterName = o.category && o.feed ? `${o.category} · ${o.feed}` : (o.category || o.feed);
+        list.replaceChildren(h('div', 'empty', err.length ? err[0] : data.updated && (data.items || []).length ? t('w.feeds.noneFrom', { name: filterName }) : t('w.feeds.addInSettings')));
         return;
       }
       // the list is rebuilt every minute (the ages): keep where it was scrolled to
@@ -123,7 +129,7 @@ W.exchange = {
           list.replaceChildren(h('div', 'empty', t('w.ratesUnavailable')));
           return false;
         }
-        box.querySelector('.w-sub').textContent = 'ECB · ' + days[days.length - 1];
+        box.querySelector('.w-sub').textContent = tp('ECB · ') + days[days.length - 1];
         list.replaceChildren(...syms.map((s) => {
           const series = days.map((k) => d.rates[k]?.[s]).filter((v) => Number.isFinite(v) && v > 0);
           const last = series[series.length - 1], prev = series[series.length - 2];
@@ -145,7 +151,7 @@ W.crypto = {
     const coins = lines(o.coins, ['bitcoin', 'ethereum', 'solana']).map((s) => s.toLowerCase()).slice(0, 8);
     const cur = (o.currency || 'usd').toLowerCase();
     const list = h('div', 'fx-list', h('div', 'empty', t('w.loading')));
-    box.append(h('div', 'w-title', 'Crypto', h('span', 'w-sub', cur.toUpperCase() + ' · 24 h · 7 d')), list);
+    box.append(h('div', 'w-title', tp('Crypto'), h('span', 'w-sub', cur.toUpperCase() + ' · 24 h · 7 d')), list);
     const load = every(5 * 60_000, async () => {
       try {
         const d = await cached(`cg:${cur}:${coins}`, `https://api.coingecko.com/api/v3/coins/markets?vs_currency=${cur}&ids=${coins.join(',')}&sparkline=true&price_change_percentage=24h`, 5 * 60_000);

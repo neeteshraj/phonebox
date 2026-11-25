@@ -148,7 +148,7 @@ internal sealed partial class WindowsDeckNative
     /// Brings the app's window to the front as it was: a minimized window is restored, a maximized one stays maximized
     /// (SW_RESTORE on it would shrink it back to its normal size, #213).
     /// </summary>
-    private static bool Focus(string process)
+    internal static bool Focus(string process)
     {
         var handle = Window(process); if (handle == 0) return false;
         ShowWindow(handle, IsIconic(handle) ? 9 : 5); // SW_RESTORE when minimized, otherwise SW_SHOW

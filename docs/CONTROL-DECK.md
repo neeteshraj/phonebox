@@ -7,7 +7,7 @@ This document tracks implementation and evidence; a catalog entry or demo is not
 
 | Group | Required capabilities | Implementation / evidence |
 |---|---|---|
-| Audio mixer | Per-application mixer, pinned application fader, device volume, stereo balance, meters, emergency mute | Native Windows implementation; isolated silent-session write/readback passed without changing other sessions or device levels |
+| Audio mixer | Per-application mixer, pinned application fader, device volume, stereo balance, meters, emergency mute, mics off / camera off | Native Windows implementation; isolated silent-session write/readback passed without changing other sessions or device levels |
 | Microphone / devices | Microphone volume/mute, input/output selection, push-to-talk, audio scenes, ducking | Implemented; lease expiry/overlap/restoration tests pass; physical microphone/default-device mutations deliberately not exercised during active work |
 | Music | Player selection, transport, seek, shuffle/repeat, playlists, queue/favorites, soundboard, sleep timer | Implemented; Spotify PKCE, disconnect, rate-limit and URI tests pass; actual Spotify account connection remains user setup |
 | Application controls | Running application dock, keys, macros, window layouts, desktops, projects/folders, snippets, presentations | Implemented with computer-configured bindings; foreground/window/presentation actions need the corresponding running application |
@@ -64,6 +64,14 @@ expiry restores its original mute state. Renewals expire after three seconds wit
 hold of sixty seconds. Overlapping holds share the original state. Ducking lowers other audio sessions while an unmuted
 microphone has a signal, and preserves manual volume changes when restoring. It is not a noise gate or speech recognizer.
 
+**Emergency mute** mutes every controllable output and microphone. **Mics off, camera off** mutes only the
+controllable microphones, leaves the speakers exactly as they were, and stops the OBS virtual camera (`StopVirtualCam`,
+so a stopped camera is never started). Both hold push-to-talk off: a held talk key is dropped, and a microphone that
+refuses the mute is retried and closed to push-to-talk until the mute lands. The camera step needs OBS connected
+(Settings › OBS) but not the OBS widget's control option. A physical webcam is not touched: turning one off on
+Windows takes admin rights or disabling its driver. The phone shows what happened to each part, and says
+**Camera not turned off** when OBS is not connected or did not stop the virtual camera.
+
 The music sleep timer fades matching application sessions over its final thirty seconds, pauses the selected player,
 then restores volume. A manual volume adjustment takes ownership away from the fade. Players without a matching
 application audio session can still be paused; their volume cannot be faded. Soundboard files and radio streams play
@@ -84,6 +92,19 @@ manifests on Windows, not playlist webpages.
 | GitHub workflows | Install/sign in to `gh`; configure owner/repo, workflow filename and optional ref | Dispatch success means accepted by GitHub CLI, not a completed workflow. |
 | Services | Configure the actual Windows service name and start/stop/restart | Reads real service state; restart waits for stop/start state transitions. Permission failures are reported. |
 | Docker / Home Assistant | Configure their existing integrations and widget control permissions | Existing container and entity/scene controls remain available; no duplicate daemon or account is introduced. |
+
+### Plex (Caldera Amp)
+
+The Plex queue and Plex playlists widgets show what is playing on a Plex Companion player and start Plex playlists on it.
+
+Plex control needs a Plex Companion player such as Caldera Amp on this computer. Start Caldera Amp once and sign in; it keeps running in the background and has no window to keep open. Plexamp on this computer works with the regular media widgets instead. Paste your Plex server address and your X-Plex-Token.
+
+- Settings: open **Control Deck** in desktop settings, then **Plex music control**. Enter the server address and the token, keep the player address at `http://127.0.0.1:32500` unless your player listens elsewhere, then use **Check Plex connection**. To add a playlist, add a control of kind `plex-playlist`, press **Load Plex playlists** and choose one.
+- The server address can be a computer on the internet behind a reverse proxy, not only one on your network. The token is sent to that server only, never to the player. Neither the address nor the token goes to the phone, and the phone sends only an id.
+- The agent talks to the server you entered and to the player address. It does not use `plex.tv` and does not start any program.
+- PhoneBox reads and controls Plex only while an enabled page shows a Plex queue or Plex playlists widget, or while you use the Plex section of the settings page. Hide the page and it stops on the next poll. The settings page sends a request only when you press **Check Plex connection** or **Load Plex playlists**, or when you open a Plex playlists widget's options and no list is loaded yet. These requests use the settings you saved: with unsaved Plex fields the page asks you to save first.
+- Caldera Amp listens on all network interfaces and accepts Plex Companion commands without a token. That is Caldera's own behavior, not PhoneBox's: anyone on your local network can control it. PhoneBox opens no port and does not pass the player's address on.
+- The queue widget shows the current track and the next 30. Covers, the rating button and a generic music source are not part of this step.
 
 Tasks and development servers use executable shortcut IDs. Only processes launched by that binding are stopped;
 output is bounded to the latest 64 KiB and readable only from desktop settings. Task timeout is thirty minutes;

@@ -47,4 +47,6 @@
     <string name="widget_prev">Previous</string>
     <string name="widget_playpause">Play / pause</string>
     <string name="widget_next">Next</string>
+    <!-- Shown instead of the panel when Android cannot start its WebView (#385). -->
+    <string name="webview_failed">The panel can\'t run on this phone: Android could not start its WebView. Some Android 5 phones can\'t run the WebView versions PhoneBox needs.</string>
 </resources>

@@ -26,6 +26,16 @@ public sealed class MediaMonitor(ILogger<MediaMonitor> log) : BackgroundService
     private long _macPositionMs;
     private long _macLastRawPositionMs;
     private DateTimeOffset _macPositionAt;
+    private string _macAnchorKey = "";
+    private bool _macAnchorPlaying;
+    private DateTimeOffset _macAnchorAt;
+    private static readonly TimeSpan AnchorEvery = TimeSpan.FromSeconds(5);
+
+    /// <summary>The clock reading (Stopwatch ticks) at which the last now-playing position was computed.</summary>
+    internal long LastSampleTicks { get; private set; }
+
+    /// <summary>Where the player itself says playback is (ms), or null when it cannot be asked. Replaced in tests.</summary>
+    internal Func<string, long?> AppPosition { get; set; } = ReadAppPosition;
     private string _macSourceKey = "";
     private string _macSource = "";
     private string _macThumb = "";       // the YouTube video's thumbnail, for browsers that publish no artwork
@@ -41,8 +51,54 @@ public sealed class MediaMonitor(ILogger<MediaMonitor> log) : BackgroundService
     private int _sessionArtId = 1_000_000;              // its own counter: the scan loop runs beside Poll
     private readonly SemaphoreSlim _scanGate = new(1, 1);
 
+    // Every reading starts nowplaying-cli or playerctl (and osascript when nothing is in Now Playing), and on macOS .NET
+    // forks the whole agent to start each one. A panel on screen asks for the snapshot every second (the live stream's
+    // state), and so does a "media-playing" rule while one exists. With nobody asking (the phone's screen is off, it is
+    // unplugged, no panel is open) a reading every IdlePoll is enough, and the first request after that reads at once.
+    internal static readonly TimeSpan ActivePoll = TimeSpan.FromSeconds(1);
+    internal static readonly TimeSpan IdlePoll = TimeSpan.FromSeconds(10);
+    internal const long WantedForMs = 15_000;
+    private long _lastRequest = -WantedForMs; // nobody has asked yet
+    // when the last reading finished; a control acts on that reading, so it reads again first when this is old
+    private long _lastReading = long.MinValue / 2;
+    internal const long FreshForMs = 2_000;
+    private readonly SemaphoreSlim _wake = new(0, 1);
+
     public AlbumArt? Art { get; private set; }
-    public MediaSnapshot? Snapshot() => _snap;
+
+    /// <summary>
+    /// The last reading, without asking for the next one: the state frame every panel gets each second uses this,
+    /// so a panel on screen does not keep the reader at ActivePoll by itself. A widget that shows the media asks
+    /// through Snapshot (GET /api/media) while it is on screen (#523).
+    /// </summary>
+    public MediaSnapshot? Peek() => _snap;
+
+    public MediaSnapshot? Snapshot()
+    {
+        var now = Environment.TickCount64;
+        if (IsIdle(Interlocked.Exchange(ref _lastRequest, now), now)) Wake();
+        return _snap;
+    }
+
+    internal static bool IsIdle(long lastRequest, long now) => now - lastRequest >= WantedForMs;
+    internal static bool IsStale(long lastReading, long now) => now - lastReading > FreshForMs;
+    private bool Idle => IsIdle(Interlocked.Read(ref _lastRequest), Environment.TickCount64);
+
+    /// <summary>A request came back after a quiet spell and the next reading will not wait out IdlePoll.</summary>
+    internal bool ReadingDue => _wake.CurrentCount > 0;
+
+    private void Wake() { try { _wake.Release(); } catch (SemaphoreFullException) { } }
+
+    /// <summary>
+    /// While nobody watches, the last reading can be up to IdlePoll old: read again before acting on it. Keyed on the
+    /// reading, not the last request, because the phone's /api/media asks for the snapshot just before it acts.
+    /// </summary>
+    private async Task RefreshIfIdle()
+    {
+        if (!IsStale(Interlocked.Read(ref _lastReading), Environment.TickCount64)) return;
+        try { await Poll(onlyIfStale: true); }
+        catch (Exception ex) { log.LogDebug("media: {Msg}", ex.Message); }
+    }
 
     protected override async Task ExecuteAsync(CancellationToken ct)
     {
@@ -52,16 +108,24 @@ public sealed class MediaMonitor(ILogger<MediaMonitor> log) : BackgroundService
         {
             try { await Poll(); }
             catch (Exception ex) { log.LogDebug("media: {Msg}", ex.Message); _snap = null; }
-            await Task.Delay(1000, ct);
+            await _wake.WaitAsync(Idle ? IdlePoll : ActivePoll, ct);
         }
     }
 
-    private async Task Poll()
+    private async Task Poll(bool onlyIfStale = false)
     {
         await _pollGate.WaitAsync();
+        // a control that waited here for the loop's own reading uses that one instead of starting the tools again
+        if (onlyIfStale && !IsStale(Interlocked.Read(ref _lastReading), Environment.TickCount64)) { _pollGate.Release(); return; }
+        var before = _snap;
+        // fresh from when the players were asked, not from when the artwork finished loading
+        var asked = Environment.TickCount64;
         try
         {
             var (snap, art) = OperatingSystem.IsMacOS() ? ReadMac() : ReadLinux();
+            // when the position was computed: for the now-playing info that is inside ReadMacSystemMedia, before the artwork is
+            // decoded (a TIFF is converted with sips, which can take seconds); otherwise it was read just now
+            var sampledAt = OperatingSystem.IsMacOS() && _macSystemMedia && LastSampleTicks != 0 ? LastSampleTicks : System.Diagnostics.Stopwatch.GetTimestamp();
             if (snap is null) { _snap = null; _now = null; Art = null; _macArtKey = ""; _macArtEncoded = ""; _macPositionKey = ""; _artUrl = ""; return; }
             if (_macSystemMedia)
             {
@@ -76,7 +140,7 @@ public sealed class MediaMonitor(ILogger<MediaMonitor> log) : BackgroundService
                     }
                     Art = _thumbArt;
                 }
-                _snap = snap with { ArtId = Art is null ? 0 : _artId };
+                _snap = snap with { ArtId = Art is null ? 0 : _artId, SampledAt = sampledAt };
                 _now = new NowInfo(_snap, _macBundle, _macRawTitle);
                 return;
             }
@@ -88,12 +152,15 @@ public sealed class MediaMonitor(ILogger<MediaMonitor> log) : BackgroundService
                 if (loaded is null) Art = null;
                 else if (Art is null || Art.Mime != loaded.Mime || !Art.Bytes.AsSpan().SequenceEqual(loaded.Bytes)) { Art = loaded; _artId++; }
             }
-            _snap = snap with { ArtId = Art is null ? 0 : _artId };
+            _snap = snap with { ArtId = Art is null ? 0 : _artId, SampledAt = sampledAt };
             _now = OperatingSystem.IsMacOS() ? new NowInfo(_snap, snap.App == "Music" ? "com.apple.Music" : "com.spotify.client", snap.Title) : null;
         }
         finally
         {
+            Interlocked.Exchange(ref _lastReading, asked);
             _pollGate.Release();
+            // a new track, a pause or a seek reaches the phone now, not at its next whole-second state
+            if (StateSignal.MediaChanged(before, _snap)) StateSignal.Poke();
         }
     }
 
@@ -154,6 +221,10 @@ public sealed class MediaMonitor(ILogger<MediaMonitor> log) : BackgroundService
                 "com.apple.Music" => "Music",
                 "com.spotify.client" => "Spotify",
                 "com.github.th-ch.youtube-music" => "YouTube Music",
+                // YouTube Music installed as a Chrome app (PWA): the ID is the same on every Mac
+                "com.google.Chrome.app.cinhimbnkkaeohfgghhklpknlkffjgod" => "YouTube Music",
+                // any other Chrome app would otherwise show its 32-letter ID
+                _ when bundle.StartsWith("com.google.Chrome.app.", StringComparison.Ordinal) => "Chrome",
                 _ => string.IsNullOrEmpty(bundle) ? "Mac" : bundle.Split('.').Last(),
             };
             var sourceKey = bundle + "\n" + title;
@@ -170,17 +241,40 @@ public sealed class MediaMonitor(ILogger<MediaMonitor> log) : BackgroundService
             var rawPosition = (long)(Math.Max(0, Num("ElapsedTime")) * 1000);
             var positionKey = sourceKey + "\n" + Num("UniqueIdentifier").ToString(CultureInfo.InvariantCulture);
             var now = sampledAt ?? DateTimeOffset.UtcNow;
+            LastSampleTicks = System.Diagnostics.Stopwatch.GetTimestamp(); // the position is as of now, whatever the artwork below takes
             if (positionKey != _macPositionKey)
             {
                 _macPositionKey = positionKey;
                 _macPositionMs = rawPosition;
                 _macLastRawPositionMs = rawPosition;
+                _macAnchorAt = DateTimeOffset.MinValue; // a new position sequence (or the same track back after a gap): ask the player
             }
             else
             {
                 var predicted = _macPositionMs + (playing ? (long)(now - _macPositionAt).TotalMilliseconds : 0);
                 _macPositionMs = rawPosition != _macLastRawPositionMs ? rawPosition : predicted;
                 _macLastRawPositionMs = rawPosition;
+            }
+            // ElapsedTime is only valid as of the Timestamp the source published it with (browsers publish it on play,
+            // pause and seek, not while playing), so the real position is that plus the time since, at the playback rate
+            if (MacPublishedAt(data, prefix + "Timestamp", now) is { } publishedAt)
+            {
+                var rate = Num("PlaybackRate");
+                _macPositionMs = rawPosition + (playing ? (long)(Math.Max(0, (now - publishedAt).TotalMilliseconds) * rate) : 0);
+                _macLastRawPositionMs = rawPosition;
+            }
+            else if (bundle is "com.spotify.client" or "com.apple.Music")
+            {
+                // Since macOS 15.4 these often report ElapsedTime 0 for the whole track and no Timestamp at all (Spotify on
+                // macOS 26: checked), so nothing here says where playback is. The player does: ask it when the track or
+                // play/pause changes and every few seconds (a seek), and count from that in between.
+                if (positionKey != _macAnchorKey || playing != _macAnchorPlaying || now - _macAnchorAt >= AnchorEvery)
+                {
+                    _macAnchorKey = positionKey;
+                    _macAnchorPlaying = playing;
+                    _macAnchorAt = now; // also after a refusal: it is not asked again every second
+                    if (AppPosition(bundle) is { } fromPlayer) { _macPositionMs = fromPlayer; _macLastRawPositionMs = rawPosition; }
+                }
             }
             _macPositionAt = now;
             var durationMs = (long)(duration * 1000);
@@ -214,6 +308,30 @@ public sealed class MediaMonitor(ILogger<MediaMonitor> log) : BackgroundService
                 _macPositionMs, durationMs, Art is null ? 0 : _artId, duration > 0), "");
         }
         catch (JsonException) { _macPositionKey = ""; return (null, ""); }
+    }
+
+    /// <summary>
+    /// When the source published the position, from the "Timestamp" of the now-playing info: a date string
+    /// (<c>2026-11-19T10:00:00Z</c>) or seconds since 1970 (a number; a count from 2001 or in milliseconds is not
+    /// guessed). Null when it is missing, unreadable or implausible, so the caller falls back to advancing the sample.
+    /// </summary>
+    internal static DateTimeOffset? MacPublishedAt(JsonElement data, string key, DateTimeOffset now)
+    {
+        if (!data.TryGetProperty(key, out var value)) return null;
+        DateTimeOffset at;
+        if (value.ValueKind == JsonValueKind.String)
+        {
+            if (!DateTimeOffset.TryParse(value.GetString(), CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out at)) return null;
+        }
+        else if (value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out var seconds) && double.IsFinite(seconds)
+                 && seconds is > 1e9 and < 1e11)
+            at = DateTimeOffset.FromUnixTimeMilliseconds((long)(seconds * 1000));
+        else return null;
+        // up to a few seconds ahead is clock noise (the date string is cut to whole seconds); further, or over half a day
+        // back, means this is not a time we can rely on
+        var age = now - at;
+        return age < TimeSpan.FromSeconds(-5) || age > TimeSpan.FromHours(12) ? null : at;
     }
 
     // Chromium browsers share Chrome's AppleScript dictionary; the key is the bundle Now Playing reports.
@@ -343,6 +461,17 @@ public sealed class MediaMonitor(ILogger<MediaMonitor> log) : BackgroundService
         catch (Exception) { return null; }
     }
 
+    /// <summary>Spotify's or Music's own "player position" (about 150 ms; never launches the app).</summary>
+    private static long? ReadAppPosition(string bundle)
+    {
+        var app = bundle == "com.spotify.client" ? "Spotify" : "Music";
+        var text = Sh.Run("osascript", "-e",
+            $"if application \"{app}\" is running then tell application \"{app}\" to return (player position as string)")?.Trim();
+        // the decimal separator follows the Mac's language ("16,32")
+        return !string.IsNullOrEmpty(text) && double.TryParse(text.Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out var s)
+            && double.IsFinite(s) && s >= 0 ? (long)(s * 1000) : null;
+    }
+
     private static (MediaSnapshot?, string) ReadMacAppleScript()
     {
         const string script = """
@@ -416,8 +545,23 @@ public sealed class MediaMonitor(ILogger<MediaMonitor> log) : BackgroundService
         return null;
     }
 
+    // The extension is what keeps a player from making the agent read any file it names. Chromium-based browsers
+    // write the art to a base::CreateTemporaryFile file, ".org.chromium.Chromium.XXXXXX" (".com.google.Chrome.XXXXXX"
+    // in Google Chrome), whose six random letters and digits only look like an extension; exactly that name is let
+    // through. The bytes must still be an image (SniffImageMime).
     private static bool HasAllowedArtExtension(string path) =>
-        Path.GetExtension(path).ToLowerInvariant() is ".png" or ".jpg" or ".jpeg" or ".webp" or ".gif";
+        IsChromiumTempName(Path.GetFileName(path))
+        || Path.GetExtension(path).ToLowerInvariant() is ".png" or ".jpg" or ".jpeg" or ".webp" or ".gif";
+
+    private static bool IsChromiumTempName(string name)
+    {
+        var prefix = name.StartsWith(".org.chromium.Chromium.", StringComparison.Ordinal) ? ".org.chromium.Chromium.".Length
+            : name.StartsWith(".com.google.Chrome.", StringComparison.Ordinal) ? ".com.google.Chrome.".Length : -1;
+        return prefix > 0 && name.Length == prefix + 6 && name.AsSpan(prefix).IndexOfAnyExcept(TempNameChars) < 0;
+    }
+
+    private static readonly System.Buffers.SearchValues<char> TempNameChars =
+        System.Buffers.SearchValues.Create("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789");
 
     /// <summary>
     /// The body of a cover art URL, or null when the server refuses it or it is larger than <see cref="MaxArtBytes"/>.
@@ -468,6 +612,7 @@ public sealed class MediaMonitor(ILogger<MediaMonitor> log) : BackgroundService
 
     public async Task<bool> Control(string action, long? ms)
     {
+        await RefreshIfIdle(); // which player to ask comes from the last reading
         bool ok;
         if (OperatingSystem.IsMacOS())
         {
@@ -500,6 +645,8 @@ public sealed class MediaMonitor(ILogger<MediaMonitor> log) : BackgroundService
             };
             ok = args is not null && Sh.Run("playerctl", args) is not null;
         }
+        // after a seek the position is no longer where the last check put it: the poll below asks the player again
+        if (action == "seek") ForgetPlayerPosition();
         try { await Poll(); } catch { }
         return ok;
     }
@@ -881,8 +1028,12 @@ public sealed class MediaMonitor(ILogger<MediaMonitor> log) : BackgroundService
         return ok;
     }
 
+    /// <summary>The next reading asks the player for its position instead of counting on from the last answer.</summary>
+    internal void ForgetPlayerPosition() => _macAnchorAt = DateTimeOffset.MinValue;
+
     public async Task<bool> PauseAsync()
     {
+        await RefreshIfIdle();
         var snap = _snap;
         if (snap is not { Playing: true }) return false;
         bool ok;

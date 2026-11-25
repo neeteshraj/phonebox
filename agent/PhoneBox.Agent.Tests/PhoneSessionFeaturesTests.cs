@@ -141,11 +141,11 @@ public sealed class PhoneSessionFeaturesTests : IDisposable
     public void ApprovalJsonHasDiffAndCanAllowSession()
     {
         var opts = new JsonSerializerOptions(JsonSerializerDefaults.Web);
-        var p = new Approval("i", "s", "sess", "proj", "Edit a file", "/a", null, 0, 1, "permission", new ApprovalDiff("/a", [new("o", "n")]));
+        var p = new Approval("i", "Claude Code", "sess", "proj", "", "Edit a file", "/a", null, 0, 1, "permission", Diff: new ApprovalDiff("/a", [new("o", "n")]));
         var json = JsonSerializer.Serialize(p, opts);
         Assert.Contains("\"canAllowSession\":true", json);
         Assert.Contains("\"diff\":{\"path\":\"/a\",\"hunks\":[{\"old\":\"o\",\"new\":\"n\"}]}", json);
-        var q = JsonSerializer.Serialize(new Approval("i", "s", "sess", "proj", "Q", "d", null, 0, 1, "question"), opts);
+        var q = JsonSerializer.Serialize(new Approval("i", "Claude Code", "sess", "proj", "", "Q", "d", null, 0, 1, "question"), opts);
         Assert.Contains("\"canAllowSession\":false", q);
         Assert.DoesNotContain("\"diff\"", q);
     }
@@ -206,14 +206,20 @@ public sealed class PhoneSessionFeaturesTests : IDisposable
             using var push = new PushStore(NullLogger<PushStore>.Instance, Path.Combine(_dir, "e2.json"));
             var store = new ApprovalStore(push, NullLogger<ApprovalStore>.Instance);
             var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            var q = store.AskAsync(new Approval("q", "s", "sess", "p", "Q", "d", null, now, now + 60_000, "question"), CancellationToken.None);
+            var q = store.AskAsync(new Approval("q", "Claude Code", "sess", "p", "", "Q", "d", null, now, now + 60_000, "question"), CancellationToken.None);
             Assert.False(store.Decide("q", "allow-session"));
             Assert.True(store.Decide("q", "skip"));
             Assert.Equal("skip", await q);
 
-            var p = store.AskAsync(new Approval("p", "s", "sess", "p", "Run", "ls", null, now, now + 60_000), CancellationToken.None);
+            var p = store.AskAsync(new Approval("p", "Claude Code", "sess", "p", "", "Run", "ls", null, now, now + 60_000), CancellationToken.None);
             Assert.True(store.Decide("p", "allow-session"));
             Assert.Equal("allow-session", await p);
+
+            // another agent's hook cannot add a session rule: its cards do not take "allow-session"
+            var o = store.AskAsync(new Approval("o", "OpenCode", "sess", "p", "", "Run", "ls", null, now, now + 60_000), CancellationToken.None);
+            Assert.False(store.Decide("o", "allow-session"));
+            Assert.True(store.Decide("o", "deny"));
+            Assert.Equal("deny", await o);
         }
         finally { Interlocked.Exchange(ref ApprovalStore.PhoneLastSeen, phone); }
     }

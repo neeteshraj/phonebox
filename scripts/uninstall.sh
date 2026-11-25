@@ -21,7 +21,7 @@ done
 if [ "$(uname -s)" = Darwin ]; then
   plist="$HOME/Library/LaunchAgents/net.oxog.phonebox.agent.plist"
   launchctl unload "$plist" 2>/dev/null || true
-  rm -f "$plist"
+  rm -f "$plist" "$(dirname "$plist")/net.oxog.phonebox.app.plist"   # and PhoneBox.app's "Start at Login"
   base="$HOME/Library/Application Support/PhoneBox"
   conf="$base"
 else

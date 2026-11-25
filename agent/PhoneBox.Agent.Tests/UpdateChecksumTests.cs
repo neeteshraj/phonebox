@@ -170,6 +170,32 @@ b47da3d09583268d7bacef2d4375555313bf455af8a3ab16fd4d7ee95082826e  PhoneBoxAgent-
     }
 
     [Fact]
+    public void AStreamedInstallThatFailsInTransferIsTriedAgainWithoutStreaming()
+    {
+        // a new Android on an old kernel cannot splice() the streamed APK; a pushed one installs (#353)
+        Assert.True(UpdateService.RetryWithoutStreaming(
+            "Performing Streamed Install\nadb.exe: failed to install PhoneBox.apk: Error: failed to write; splice failed: EINVAL (Invalid argument)\n"));
+        Assert.False(UpdateService.RetryWithoutStreaming("Performing Streamed Install\nSuccess\n"));
+        // refusals by the package manager are not a transfer problem
+        Assert.False(UpdateService.RetryWithoutStreaming("adb: failed to install x.apk: Failure [INSTALL_FAILED_UPDATE_INCOMPATIBLE: signatures do not match]"));
+        Assert.False(UpdateService.RetryWithoutStreaming("Failure [INSTALL_PARSE_FAILED_NOT_APK]"));
+    }
+
+    [Fact]
+    public void APhoneUpdatedAnotherWayIsNotInstalledAgain()
+    {
+        // installed by hand after a failed update: the retry ends without installing, so "update available" clears (#353)
+        const string dump = "Packages:\n  Package [net.oxog.phonebox.deskpanel] (3ec2f24):\n    versionCode=47 minSdk=21 targetSdk=35\n    versionName=0.9.26\n";
+        Assert.True(UpdateService.AppCurrentOn(dump, "0.9.26"));
+        Assert.True(UpdateService.AppCurrentOn(dump.Replace("0.9.26", "0.9.27"), "0.9.26"));
+        Assert.False(UpdateService.AppCurrentOn(dump.Replace("0.9.26", "0.9.25"), "0.9.26"));
+        Assert.False(UpdateService.AppCurrentOn("", "0.9.26"));                   // no answer: install as before
+        Assert.False(UpdateService.AppCurrentOn("Unable to find package", "0.9.26"));
+        Assert.False(UpdateService.AppCurrentOn(dump.Replace("0.9.26", "0.9.25+local"), "0.9.26")); // can't compare: install
+        Assert.False(UpdateService.AppCurrentOn(dump.Replace("0.9.26", "0.9.26_local"), "0.9.26"));
+    }
+
+    [Fact]
     public void APhoneStaysPendingUntilItsOwnUpdateWorks()
     {
         Assert.Equal(["A"], UpdateService.NextPhoneRetry([], attempted: ["A", "B"], failed: ["A"]));
@@ -275,6 +301,93 @@ b47da3d09583268d7bacef2d4375555313bf455af8a3ab16fd4d7ee95082826e  PhoneBoxAgent-
             await svc3.ApplyAsync();
             Assert.True(svc3.Status().AppUpdate);
             Assert.Equal(reason, svc3.Status().Error);
+        }
+        finally
+        {
+            UpdateService.AppVersion = prevAppVer;
+            try { Directory.Delete(dir, true); } catch { }
+        }
+    }
+
+    /// <summary>While "adb install" runs, AdbReverse knows it, and doesn't restart an adb server that seems hung.</summary>
+    [Fact]
+    public async Task AnAppInstallIsMarkedAsRunningForTheAdbWatchdog()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "pb-upd-installing-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var prevAppVer = UpdateService.AppVersion;
+        try
+        {
+            // "install" leaves a mark and waits for the gate file; everything else answers at once
+            string fakeAdb;
+            if (OperatingSystem.IsWindows())
+            {
+                fakeAdb = Path.Combine(dir, "adb.cmd");
+                File.WriteAllText(fakeAdb, """
+                    @echo off
+                    if not "%3"=="install" (echo ok& exit /b 0)
+                    echo.>"%~dp0installing"
+                    :hold
+                    if not exist "%~dp0gate" (ping -n 2 127.0.0.1 >nul& goto hold)
+                    echo Success
+                    exit /b 0
+                    """.ReplaceLineEndings("\r\n")); // goto finds its label reliably only in a CRLF batch file
+            }
+            else
+            {
+                fakeAdb = Path.Combine(dir, "adb");
+                File.WriteAllText(fakeAdb, "#!/bin/sh\nD=$(dirname \"$0\")\nif [ \"$3\" != install ]; then echo ok; exit 0; fi\n"
+                    + "touch \"$D/installing\"\nwhile [ ! -e \"$D/gate\" ]; do sleep 0.1; done\necho Success\n");
+                File.SetUnixFileMode(fakeAdb, (UnixFileMode)0b111_101_101);
+            }
+            var cfgPath = Path.Combine(dir, "config.json");
+            File.WriteAllText(cfgPath, JsonSerializer.Serialize(new { adbPath = fakeAdb, updates = new { auto = false } }));
+            var cfg = new ConfigStore(cfgPath);
+            var adb = new AdbReverse(cfg, NullLogger<AdbReverse>.Instance);
+            typeof(AdbReverse).GetField("_devices", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(adb, new[] { "SER1" });
+
+            var ver = AppPaths.Version;
+            var apkBytes = "apk-v-test"u8.ToArray();
+            var sums = $"{Convert.ToHexStringLower(SHA256.HashData(apkBytes))}  PhoneBox-{ver}.apk\n";
+            var relJson = $$"""
+                {
+                  "tag_name": "v{{ver}}",
+                  "html_url": "https://example.invalid/release",
+                  "assets": [
+                    { "name": "PhoneBox-{{ver}}.apk", "browser_download_url": "https://example.invalid/PhoneBox-{{ver}}.apk" },
+                    { "name": "SHA256SUMS-{{ver}}.txt", "browser_download_url": "https://example.invalid/SHA256SUMS-{{ver}}.txt" }
+                  ]
+                }
+                """;
+            var svc = new UpdateService(cfg, adb, new NoopLifetime(), NullLogger<UpdateService>.Instance) { DownloadsDir = Path.Combine(dir, "dl") };
+            typeof(UpdateService).GetField("_http", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(svc, new HttpClient(new FakeReleaseHandler(relJson, apkBytes, sums)));
+
+            UpdateService.AppVersion = "0.0.1";
+            await svc.CheckAsync();
+            Assert.False(adb.InstallRunning);
+            using var cancel = new CancellationTokenSource();
+            var apply = svc.ApplyAsync(cancel.Token);
+            try
+            {
+                for (var i = 0; i < 600 && !File.Exists(Path.Combine(dir, "installing")); i++) await Task.Delay(50);
+                Assert.True(File.Exists(Path.Combine(dir, "installing")));
+                Assert.True(adb.InstallRunning);
+
+                File.WriteAllText(Path.Combine(dir, "gate"), "");
+                await apply.WaitAsync(TimeSpan.FromSeconds(60));
+                Assert.Null(svc.Status().Error);
+                Assert.False(adb.InstallRunning);
+            }
+            finally
+            {
+                // a failed assertion above: the fake install is ended and joined before the folder goes
+                if (!apply.IsCompleted)
+                {
+                    await cancel.CancelAsync();
+                    try { await apply.WaitAsync(TimeSpan.FromSeconds(30)); } catch (Exception) { }
+                }
+            }
         }
         finally
         {

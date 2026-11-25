@@ -17,8 +17,9 @@ android {
         applicationId = "net.oxog.phonebox.deskpanel"
         minSdk = 21 // Android 5.0; see CONTRIBUTING.md before changing it
         targetSdk = 35
-        versionCode = 42
-        versionName = "0.9.21"
+        versionCode = 50
+        versionName = "0.9.29"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     signingConfigs {
@@ -60,4 +61,9 @@ android {
 
 dependencies {
     implementation("androidx.webkit:webkit:1.12.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    testImplementation("junit:junit:4.13.2")
+    // android.jar's org.json is a stub on the JVM; the real one lets the unit tests build and read JSON
+    testImplementation("org.json:json:20240303")
 }

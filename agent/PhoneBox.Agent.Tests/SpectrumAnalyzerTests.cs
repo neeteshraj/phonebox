@@ -72,6 +72,66 @@ public sealed class SpectrumAnalyzerTests : IDisposable
         Assert.True(loud > quiet, $"{loud} <= {quiet}");
     }
 
+    [Theory]
+    [InlineData(true, -19.3f, 1f)]    // hardware volume: loopback is at full level already
+    [InlineData(false, 0f, 1f)]       // software volume at 100 %
+    [InlineData(false, -20f, 10f)]    // software volume at -20 dB: undo it
+    [InlineData(false, -65f, 100f)]   // nearly silent slider: at most +40 dB
+    [InlineData(false, 3f, 1f)]       // never turned down
+    [InlineData(false, float.NaN, 1f)]
+    public void LoopbackGainUndoesSoftwareVolume(bool hardware, float db, float gain) =>
+        Assert.Equal(gain, SpectrumAnalyzer.LoopbackGain(hardware, db), 3);
+
+    [Fact]
+    public void SoftwareVolumeNoLongerFlattensTheBars()
+    {
+        // a monitor at 28 % (-19.3 dB) hands over music 19 dB quieter: with the gain the bars match full volume
+        var full = SpectrumAnalyzer.Analyze(Sine(1000, 0.05), 48000).Max();
+        var turnedDown = Sine(1000, 0.05 * Math.Pow(10, -19.3 / 20));
+        var gain = SpectrumAnalyzer.LoopbackGain(false, -19.3f);
+        var restored = SpectrumAnalyzer.Analyze(turnedDown.Select(s => s * gain).ToArray(), 48000).Max();
+        Assert.True(SpectrumAnalyzer.Analyze(turnedDown, 48000).Max() < full - 20);
+        Assert.InRange(restored, full - 1, full + 1);
+    }
+
+    private static byte[] FloatFrames(int frames, params float[] frame) =>
+        Enumerable.Repeat(frame, frames).SelectMany(f => f).SelectMany(BitConverter.GetBytes).ToArray();
+
+    [Fact]
+    public void AVolumeChangeOnlyScalesAudioCapturedAfterIt()
+    {
+        // a monitor at -40 dB (gain 100) for the first block, then turned up to 0 dB (gain 1) before the next one arrives:
+        // the samples already in the ring keep the gain they were captured with
+        var ring = new float[8];
+        var pos = SpectrumAnalyzer.Downmix(FloatFrames(4, 0.001f, 0.001f), 2, 32, true, 8, SpectrumAnalyzer.LoopbackGain(false, -40), ring, 0);
+        pos = SpectrumAnalyzer.Downmix(FloatFrames(4, 0.1f, 0.1f), 2, 32, true, 8, SpectrumAnalyzer.LoopbackGain(false, 0), ring, pos);
+        Assert.Equal(0, pos);
+        Assert.All(ring, s => Assert.Equal(0.1f, s, 4)); // the same level before and after the change
+    }
+
+    [Theory]
+    [InlineData(2)]
+    [InlineData(4)] // DualSense
+    [InlineData(8)] // 7.1
+    public void StereoOnASurroundOutputKeepsItsLevel(int channels)
+    {
+        // stereo content fills the front pair only; the other channels are silent
+        var frame = new float[channels];
+        frame[0] = frame[1] = 0.5f;
+        var ring = new float[4];
+        SpectrumAnalyzer.Downmix(FloatFrames(4, frame), channels, 32, true, channels * 4, 1, ring, 0);
+        Assert.All(ring, s => Assert.Equal(0.5f, s, 4));
+    }
+
+    [Fact]
+    public void PcmIsDownmixedToo()
+    {
+        var ring = new float[2];
+        var pcm16 = new short[] { 16384, 16384, -16384, -16384 }.SelectMany(BitConverter.GetBytes).ToArray();
+        SpectrumAnalyzer.Downmix(pcm16, 2, 16, false, 4, 1, ring, 0);
+        Assert.Equal([0.5f, -0.5f], ring);
+    }
+
     [Fact]
     public void OnlyFullWindowsAreAnalyzed() =>
         Assert.Throws<ArgumentException>(() => SpectrumAnalyzer.Analyze(new float[100], 48000));
