@@ -294,7 +294,7 @@ body:is([data-theme="material"], [data-theme="shadcn"]) .q-plan { border-radius:
 body:is([data-theme="material"], [data-theme="shadcn"]) .q-dial .bg { stroke: color-mix(in oklab, var(--qc, var(--q)) 22%, var(--m-s3)); stroke-width: 10; }
 body:is([data-theme="material"], [data-theme="shadcn"]) .q-dial .fg { stroke-width: 10; }
 body:is([data-theme="material"], [data-theme="shadcn"]) .q-dial .pace { stroke: var(--m-on-surface); stroke-width: 2; opacity: .75; }
-body:is([data-theme="material"], [data-theme="shadcn"]) .q-pct { font-weight: 400; font-size: min(11cqh, 32px); }
+body:is([data-theme="material"], [data-theme="shadcn"]) .q-pct { font-weight: 400; font-size: min(9cqh, 28px); }
 body:is([data-theme="material"], [data-theme="shadcn"]) .q-label { font-weight: 500; font-size: 13px; margin-top: 8px; }
 body:is([data-theme="material"], [data-theme="shadcn"]) .q-reset { color: var(--m-on-var); }
 /* status lines become tonal chips */

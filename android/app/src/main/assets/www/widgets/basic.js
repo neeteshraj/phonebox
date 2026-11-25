@@ -714,7 +714,10 @@ W.quotas = {
         const st = Q_STYLE[p.id] || { color: '#94a3b8', logo: '●' };
         const card = h('div', 'q-card' + (p.limits.length >= 4 ? ' q-card-compact' : ''));
         card.style.setProperty('--q', st.color);
-        card.style.flex = needsPaging && ps === 2 ? '1 1 0' : String(Math.max(1, p.limits.length) + 0.3);
+        // width by content: a ring is one share, the Codex details box another, so a one-ring card is not squeezed
+        card.style.flex = needsPaging && ps === 2 ? '1 1 0' : String(Math.max(1, p.limits.length) + (p.id === 'codex' && p.codex ? 1.2 : 0) + 0.3);
+        // and never narrower than its rings' labels need
+        if (!(needsPaging && ps === 2) && p.limits.length < 4) card.style.minWidth = Math.max(1, p.limits.length) * 104 + 30 + 'px';
         card.appendChild(h('div', 'q-head', h('span', 'q-logo', st.logo), h('span', 'q-name', p.name), h('span', 'q-plan', p.plan),
           p.updatedAt ? h('span', 'q-upd', fmtDur(Date.now() - p.updatedAt) + ' ago') : null));
         const compact = p.limits.length >= 4;
@@ -732,7 +735,7 @@ W.quotas = {
           const pctEl = h('div', 'q-pct', String(Math.round(l.percent)), h('small', null, '%'));
           if (compact) pctEl.style.fontSize = 'calc(22px * var(--widget-font-scale, 1))';
           dial.appendChild(pctEl);
-          rings.appendChild(h('div', 'q-ring', dial, h('div', 'q-label', l.label), p.id === 'codex' ? h('div', 'q-left', `${Math.max(0, Math.round(100 - l.percent))}% left`) : null, h('div', 'q-reset', fmtReset(l.resetsAt)),
+          rings.appendChild(h('div', 'q-ring', dial, h('div', 'q-label', l.label), p.id === 'codex' ? h('div', 'q-left', `${Math.max(0, Math.round(100 - l.percent))}% left`) : null, h('div', 'q-reset', ...String(fmtReset(l.resetsAt) || '').split(' · ').map((x) => h('span', null, x))),
             pace ? h('div', 'q-pace ' + pace.cls, pace.text) : null));
         }
         if (!p.limits.length) rings.appendChild(h('div', 'q-reset', 'No data'));
