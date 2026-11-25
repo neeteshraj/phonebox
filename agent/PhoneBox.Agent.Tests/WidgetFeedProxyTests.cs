@@ -88,7 +88,9 @@ public sealed class WidgetFeedProxyTests
         Assert.Equal("""{"ok":true}""", new StreamReader(httpContext.Response.Body, Encoding.UTF8).ReadToEnd());
     }
 
+    // This fork lets the paired phone use the feed proxy over Wi-Fi / Tailscale too: a phone that resolves no names gets
+    // its weather through the agent. The proxy still fetches only its allow-listed public hosts.
     [Fact]
-    public void ProxyEndpointStaysLocalAndOffLanAllowlist()
-        => Assert.False(Lan.AllowedOverLan("/api/proxy"));
+    public void ProxyEndpointIsOnTheLanAllowlistForThePairedPhone()
+        => Assert.True(Lan.AllowedOverLan("/api/proxy"));
 }

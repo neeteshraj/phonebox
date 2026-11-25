@@ -87,6 +87,10 @@ public static class Lan
 
     /// <summary>Endpoints the phone may use over Wi-Fi. Settings, tests and pairing stay local-only.</summary>
     public static bool AllowedOverLan(PathString path) =>
+        // the widgets' feed proxy: a phone whose own DNS resolves nothing (Private DNS, Tailscale) still gets the weather, air
+        // quality and the other built-in public feeds. Only the paired phone reaches it over the network, only with GET (the
+        // one route mapped), and only for WidgetFeedProxy's short list of public hosts.
+        path == "/api/proxy" ||
         path == "/api/controls/spotify/state" || path.StartsWithSegments("/api/controls/spotify/action")
         || path == "/api/controls/plex/state" || path.StartsWithSegments("/api/controls/plex/action")
         || path == "/api/controls/state" || path == "/api/controls/listen" || path.StartsWithSegments("/api/controls/radio-logo") || path.StartsWithSegments("/api/controls/command") || path.StartsWithSegments("/api/controls/obs")

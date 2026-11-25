@@ -59,7 +59,7 @@ public class UsbLinkTests
     [InlineData("POST", "/api/pair/start")]
     [InlineData("GET", "/api/pair/status")]
     [InlineData("POST", "/api/pair")]
-    [InlineData("POST", "/api/proxy")]
+    // (POST /api/proxy: the path is on the phone allow-list in this fork, and only GET is mapped, so a POST gets 405)
     [InlineData("GET", "/api/info")]
     [InlineData("POST", "/api/update/apply")]
     [InlineData("GET", "/api/latency")]

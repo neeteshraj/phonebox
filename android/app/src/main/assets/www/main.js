@@ -135,18 +135,31 @@ export const hist = { cpu: [], gpu: [], ram: [], vram: [], down: [], up: [], pin
 export const pushHist = (k, v) => { const a = hist[k]; a.push(v ?? 0); if (a.length > HIST) a.shift(); };
 
 // ---------------------------------------------------------------- helpers
-/** fetch() to the panel's local/USB feed proxy when the phone cannot reach an allowed public HTTPS feed directly. */
+/**
+ * fetch() for the built-in public feeds, falling back to the agent's feed proxy (GET /api/proxy) when the phone cannot
+ * reach them itself. A phone whose own DNS resolves nothing (Private DNS, Tailscale) takes ~20 s to fail, longer than
+ * the callers wait, so the direct try gets 4 s of its own, and after a failure the proxy goes first for 10 minutes.
+ */
+let directBrokenUntil = 0;
 export async function safeFetch(url, opts = {}) {
+  const viaAgent = () => fetch(`${API}/proxy?url=${encodeURIComponent(url)}`, { ...opts, headers: { ...(opts.headers || {}), ...PANEL_HEADERS } });
+  const proxied = typeof url === 'string' && url.startsWith('https://');
+  if (proxied && Date.now() < directBrokenUntil) return viaAgent();
+  const ctl = new AbortController();
+  const stop = () => ctl.abort();
+  opts.signal?.addEventListener('abort', stop, { once: true });
+  const timer = proxied ? setTimeout(stop, 4000) : 0;
   try {
-    return await fetch(url, opts);
+    return await fetch(url, { ...opts, signal: ctl.signal });
   } catch (e) {
-    if (!opts.signal?.aborted && typeof url === 'string' && url.startsWith('https://')) {
-      return await fetch(`${API}/proxy?url=${encodeURIComponent(url)}`, {
-        ...opts,
-        headers: { ...(opts.headers || {}), ...PANEL_HEADERS },
-      });
+    if (!opts.signal?.aborted && proxied) {
+      directBrokenUntil = Date.now() + 10 * 60_000;
+      return await viaAgent();
     }
     throw e;
+  } finally {
+    clearTimeout(timer);
+    opts.signal?.removeEventListener('abort', stop);
   }
 }
 
