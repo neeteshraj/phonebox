@@ -1050,11 +1050,12 @@ W.processes = {
       const rowH = document.body.dataset.theme === 'material' || document.body.dataset.theme === 'shadcn' ? 50 : 44;
       const showShare = box.clientHeight > 260;
       share.hidden = !showShare;
-      const rows = Math.max(1, Math.floor((box.clientHeight - 50 - (showShare ? 46 : 0)) / rowH));
+      // every app (the top 80), in a list that scrolls; rows keep their height
       grid.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
-      grid.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
+      grid.style.gridTemplateRows = '';
+      grid.style.gridAutoRows = rowH - 8 + 'px';
       const sorted = [...data.groups].sort((a, b) => (sort === 'cpu' ? b.cpu - a.cpu || b.memMb - a.memMb : b.memMb - a.memMb));
-      const list = sorted.slice(0, cols * rows);
+      const list = sorted.slice(0, 80);
       const max = Math.max(0.1, ...list.map(val));
       const pc = D.state?.pc;
       sum.replaceChildren(...[
@@ -1123,39 +1124,65 @@ export function applyToggles(root) {
 
 const ACTION_STATE = { 'monitor-off': 'Turn the display off', monitoroff: 'Turn the display off', screenoff: 'Turn the display off', lock: 'Lock the Mac', sleep: 'Put the Mac to sleep' };
 
+// a built-in action's line icon (the uploaded 3D pictures read as clip-art next to the real app icons)
+const ACTION_ICON = { mute: 'volumeX', 'monitor-off': 'moon', monitoroff: 'moon', screenoff: 'moon', lock: 'lock', sleep: 'moon', playpause: 'play', search: 'search' };
+
 function launcher(box, list, o) {
-  // iOS-style: apps on a wallpaper as squircle icons, the first four in a frosted Dock, and the built-in actions
-  // (mute, screen off, lock …) as Control Center tiles beside the grid.
-  box.classList.add('lx');
+  // A full-page launcher: the apps with their real Mac icons, labelled, a dot on the running ones and a ring on the
+  // one in front; the built-in actions (mute, screen off, lock …) as control tiles beside them.
+  box.classList.add('ln');
   const apps = list.filter((s) => s.kind !== 'action'), acts = list.filter((s) => s.kind === 'action');
-  const dockN = apps.length > 5 ? Math.min(4, apps.length - 1) : 0;
-  const dockApps = apps.slice(0, dockN), homeApps = apps.slice(dockN);
-  const appKey = (s) => { const b = keyButton(s); b.classList.add('lx-app'); b.append(h('i', 'lx-dot')); return b; };
-  const homeKeys = homeApps.map(appKey), dockKeys = dockApps.map(appKey);
-  const actKeys = acts.map((s) => { const b = keyButton(s); b.classList.add('lx-cc'); b.append(h('span', 'lx-state')); return b; });
-  const grid = h('div', 'lx-grid', ...homeKeys);
-  grid.style.setProperty('--cols', String(Math.min(5, Math.max(2, homeApps.length > 4 ? Math.ceil(homeApps.length / 2) : homeApps.length))));
-  const stage = h('div', 'lx-stage', grid, ...(acts.length ? [h('div', 'lx-ccs', ...actKeys)] : []));
-  box.append(stage, ...(dockN ? [h('div', 'lx-dock', ...dockKeys)] : []));
-  const allApps = [...dockApps, ...homeApps], allKeys = [...dockKeys, ...homeKeys];
+  const appKey = (s) => {
+    // an app the Mac knows by bundle id shows its own icon, not the upload
+    const b = keyButton(s.bundle ? { ...s, iconRev: null } : s);
+    b.classList.add('ln-app');
+    b.append(h('i', 'ln-dot'));
+    if (s.bundle) {
+      const img = new Image();
+      img.alt = '';
+      img.onload = () => { const ic = b.querySelector('.k-icon'); ic.replaceChildren(img); ic.classList.add('k-icon-img', 'ln-real'); };
+      img.src = `${API}/system/apps/icon?bundle=${encodeURIComponent(s.bundle)}`;
+    }
+    return b;
+  };
+  const appKeys = apps.map(appKey);
+  const actKeys = acts.map((s) => {
+    const name = ACTION_ICON[s.id] || (/mute/i.test(s.id) ? 'volumeX' : /lock/i.test(s.id) ? 'lock' : /off|sleep/i.test(s.id) ? 'moon' : null);
+    const b = keyButton(name ? { ...s, iconRev: null } : s);
+    b.classList.add('ln-ctl');
+    if (name) b.querySelector('.k-icon').replaceChildren(icon(name));
+    b.append(h('span', 'ln-state'));
+    return b;
+  });
+  const runSum = h('span', 'ln-sub');
+  const grid = h('div', 'ln-grid', ...appKeys);
+  grid.style.setProperty('--cols', String(Math.min(5, Math.max(3, Math.ceil(apps.length / 2)))));
+  box.append(
+    h('section', 'ln-apps', h('div', 'ln-head', h('span', 'ln-title', 'Apps'), runSum), grid),
+    ...(acts.length ? [h('section', 'ln-ctls', h('div', 'ln-head', h('span', 'ln-title', 'Controls')), h('div', 'ln-ctl-list', ...actKeys))] : []));
   let running = null, at = 0, busy = false;
   const draw = () => {
     const tg = D.state?.toggles || {};
     acts.forEach((s, i) => {
       const on = tg[s.id] === true;
-      actKeys[i].classList.toggle('on', on);
-      actKeys[i].querySelector('.lx-state').textContent = /mute/i.test(s.id) ? (on ? 'Muted' : 'Sound on')
+      const k = actKeys[i];
+      k.classList.toggle('on', on);
+      if (/mute/i.test(s.id)) k.querySelector('.k-icon').replaceChildren(icon(on ? 'volumeX' : 'volume'));
+      k.querySelector('.ln-state').textContent = /mute/i.test(s.id) ? (on ? 'Muted' : 'Sound on')
         : s.toggle ? (on ? 'On' : 'Off') : (ACTION_STATE[s.id] || 'Tap to run');
     });
     const live = running ? new Map(running.map((a) => [a.bundleId, a])) : null;
-    allApps.forEach((s, i) => {
+    let n = 0;
+    apps.forEach((s, i) => {
       const a = live && s.bundle ? live.get(s.bundle) : null;
-      allKeys[i].classList.toggle('running', !!a);
-      allKeys[i].classList.toggle('front', !!a?.active);
+      if (a) n++;
+      appKeys[i].classList.toggle('running', !!a);
+      appKeys[i].classList.toggle('front', !!a?.active);
     });
+    runSum.textContent = live ? `${n} of ${apps.length} running` : '';
   };
   const load = async () => {
-    if (busy || Date.now() - at < 3000 || !allApps.some((s) => s.bundle)) return;
+    if (busy || Date.now() - at < 3000 || !apps.some((s) => s.bundle)) return;
     busy = true;
     try { running = await api('/system/apps'); at = Date.now(); } catch (_) {} finally { busy = false; }
     draw();

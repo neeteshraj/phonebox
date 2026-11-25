@@ -1867,7 +1867,9 @@ body.rm-fullscreen #dots, body.rm-fullscreen #ptitle { display: none; }
 .p-key i { width: 8px; height: 8px; border-radius: 2px; flex: none; }
 .p-key span { overflow: hidden; text-overflow: ellipsis; max-width: 130px; }
 .p-key b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
-.px .p-grid { gap: 8px 10px; }
+.px .p-grid { gap: 8px 10px; overflow-y: auto; overscroll-behavior: contain; touch-action: pan-x pan-y; align-content: start; scrollbar-width: none;
+  -webkit-mask-image: linear-gradient(#000 calc(100% - 18px), transparent); mask-image: linear-gradient(#000 calc(100% - 18px), transparent); }
+.px .p-grid::-webkit-scrollbar { display: none; }
 .w-processes.px .proc { padding: 0 14px 0 10px; gap: 12px; background: color-mix(in srgb, var(--text) 2.5%, transparent); box-shadow: inset 0 0 0 1px var(--line, rgba(255, 255, 255, .08)); border: 0; border-radius: 12px; }
 .w-processes.px .proc .p-ico { width: 32px; height: 32px; flex: 0 0 32px; border-radius: 9px; }
 .px .p-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; margin-bottom: 7px; }
@@ -1884,3 +1886,47 @@ body.rm-fullscreen #dots, body.rm-fullscreen #ptitle { display: none; }
 .p-meter::after { content: ''; position: absolute; inset: 0 auto 0 0; width: var(--w, 0%); border-radius: 2px; background: var(--hue, var(--c)); transition: width .6s cubic-bezier(.2, .8, .2, 1); }
 .p-meter { display: none; }
 .px .p-meter { display: block; left: 54px; }
+
+/* ---------- Shortcuts launcher: real Mac app icons on the left, control tiles on the right ---------- */
+.w-shortcuts.ln { display: grid; grid-template-columns: minmax(0, 1.75fr) minmax(250px, 1fr); gap: 12px; padding: 0; background: none; border: 0; box-shadow: none; }
+.ln > section { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 16px 18px; border-radius: 16px; overflow: hidden;
+  background: var(--card, #09090b); box-shadow: inset 0 0 0 1px var(--line, #27272a); }
+.ln-apps::before { content: ''; position: absolute; inset: -40% -10% auto; height: 80%; pointer-events: none;
+  background: radial-gradient(50% 60% at 30% 40%, rgba(99, 102, 241, .16), transparent 70%), radial-gradient(40% 50% at 75% 30%, rgba(236, 72, 153, .10), transparent 70%); }
+.ln-head { position: relative; display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+.ln-title { font-size: 14px; font-weight: 600; color: var(--text); letter-spacing: -0.01em; }
+.ln-sub { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.ln-grid { position: relative; flex: 1; min-height: 0; display: grid; grid-template-columns: repeat(var(--cols, 4), minmax(0, 1fr)); grid-auto-rows: 1fr; gap: 6px 10px; }
+
+.w-shortcuts.ln .key.ln-app { background: none; border: 0; box-shadow: none; border-radius: 18px; gap: 8px; padding: 6px 4px; justify-content: center;
+  transition: transform .25s cubic-bezier(.34, 1.56, .64, 1), background .2s; }
+.w-shortcuts.ln .key.ln-app:active { transform: scale(.9); filter: none; background: rgba(255, 255, 255, .04); }
+.ln-app .k-icon { position: relative; display: grid; place-items: center; width: clamp(48px, 17cqh, 76px); height: clamp(48px, 17cqh, 76px); font-size: clamp(26px, 9cqh, 40px);
+  border-radius: 23%; background: linear-gradient(160deg, color-mix(in srgb, var(--k) 70%, #fff 0%), color-mix(in srgb, var(--k) 70%, #000)); box-shadow: 0 6px 16px rgba(0, 0, 0, .35); transition: box-shadow .3s; }
+.w-shortcuts.ln .ln-app .k-icon.k-icon-img { background: none; box-shadow: none; }
+.w-shortcuts.ln .ln-app .k-icon.k-icon-img img { width: 100%; height: 100%; object-fit: contain; border-radius: 22%; filter: drop-shadow(0 6px 12px rgba(0, 0, 0, .45)); }
+.w-shortcuts.ln .ln-app .k-icon.ln-real img { border-radius: 0; } /* a Mac icon brings its own shape */
+.w-shortcuts.ln .ln-app .k-label { font-size: 12.5px; font-weight: 500; color: var(--text); max-width: 100%; }
+.ln-dot { width: 4px; height: 4px; border-radius: 50%; background: transparent; margin-top: -4px; transition: background .3s; }
+.ln-app.running .ln-dot { background: rgba(250, 250, 250, .75); }
+.ln-app.front .ln-dot { background: #22c55e; box-shadow: 0 0 8px #22c55e; }
+.ln-app.front .k-icon.k-icon-img img { filter: drop-shadow(0 0 14px rgba(34, 197, 94, .35)) drop-shadow(0 6px 12px rgba(0, 0, 0, .45)); }
+
+.ln-ctl-list { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
+.w-shortcuts.ln .key.ln-ctl { flex: 1; max-height: 96px; flex-direction: row; justify-content: flex-start; align-items: center; gap: 14px; padding: 0 16px;
+  border-radius: 14px; border: 0; background: color-mix(in srgb, var(--text) 3%, transparent); box-shadow: inset 0 0 0 1px var(--line, #27272a);
+  display: grid; grid-template-columns: 44px minmax(0, 1fr); grid-template-rows: auto auto; column-gap: 14px; row-gap: 2px; align-content: center;
+  transition: transform .2s cubic-bezier(.34, 1.56, .64, 1), background .25s, color .25s; }
+.w-shortcuts.ln .key.ln-ctl:active { transform: scale(.97); filter: none; }
+.ln-ctl .k-icon { grid-row: 1 / span 2; width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; font-size: 20px;
+  background: #18181b; box-shadow: inset 0 0 0 1px var(--line, #27272a); color: var(--text); }
+.ln-ctl .k-icon .ico { width: 20px; height: 20px; }
+.ln-ctl .k-icon.k-icon-img img { width: 26px; height: 26px; }
+.w-shortcuts.ln .ln-ctl .k-label { justify-self: start; align-self: end; font-size: 14px; font-weight: 600; color: var(--text); max-width: 100%; }
+.ln-state { justify-self: start; align-self: start; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.w-shortcuts.ln .key.ln-ctl.on { background: #fafafa; box-shadow: none; }
+.w-shortcuts.ln .key.ln-ctl.on .k-label { color: #09090b; }
+.w-shortcuts.ln .key.ln-ctl.on .ln-state { color: #52525b; }
+.w-shortcuts.ln .key.ln-ctl.on .k-icon { background: #09090b; color: #fafafa; box-shadow: none; }
+@container (max-width: 640px) { .w-shortcuts.ln { grid-template-columns: 1fr; } }
+.w-shortcuts.ln .key.ln-ctl::before, .w-shortcuts.ln .key.ln-ctl::after { display: none; }
