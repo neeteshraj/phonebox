@@ -1583,7 +1583,10 @@ body.controls-top .ap-foot { order: -1; margin-bottom: 4px; }
 .ai-chip.waiting i { background: #ef4444; animation-duration: .8s; }
 .ai-more { flex: none; }
 .w-sessions.ai .s-list { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); grid-auto-rows: 76px; gap: 8px; }
-.w-sessions.ai.ai-solo .s-list { grid-template-columns: 1fr; grid-auto-rows: 92px; }
+.w-sessions.ai.ai-few .s-list { grid-template-columns: 1fr; grid-auto-rows: 88px; gap: 10px; }
+.w-sessions.ai.ai-few .ai-card { padding: 0 18px 0 16px; gap: 14px; grid-template-columns: 46px minmax(0, 1fr); }
+.w-sessions.ai.ai-few .ai-card .tl { width: 46px; height: 46px; border-radius: 14px; font-size: 22px; }
+.w-sessions.ai.ai-few .ai-card .sess-meta { font-size: 12.5px; }
 .w-sessions.ai .sess.ai-card {
   position: relative; overflow: hidden; display: grid; grid-template-columns: 40px minmax(0, 1fr); align-items: center; gap: 12px;
   padding: 0 14px 0 12px; border-radius: 14px; opacity: 1; transform: none;
@@ -1599,7 +1602,7 @@ body.controls-top .ap-foot { order: -1; margin-bottom: 4px; }
 .w-sessions.ai .ai-card .tl-st { display: block; position: absolute; right: -3px; bottom: -3px; width: 12px; height: 12px; border-radius: 50%;
   background: #22c55e; box-shadow: 0 0 0 2.5px var(--bg, #09090b); }
 .w-sessions.ai .ai-card .nm { font-size: 14.5px; font-weight: 600; letter-spacing: -0.01em; }
-.w-sessions.ai.ai-solo .ai-card .nm { font-size: 17px; }
+.w-sessions.ai.ai-few .ai-card .nm { font-size: 16.5px; }
 .w-sessions.ai .ai-card .sess-meta { font-size: 11.5px; color: var(--muted); }
 .w-sessions.ai .ai-card .sess-main { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .ai-top, .ai-bot { display: flex; align-items: center; gap: 8px; min-width: 0; }

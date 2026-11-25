@@ -929,7 +929,7 @@ W.sessions = {
       more.textContent = showIdle ? 'Hide idle' : `+${idle} idle`;
       const shown = (showIdle ? sessions : live).slice()
         .sort((a, b) => (active(b) - active(a)) || (S_ORDER[a.status] ?? 9) - (S_ORDER[b.status] ?? 9) || b.since - a.since);
-      box.classList.toggle('ai-solo', shown.length === 1);
+      box.classList.toggle('ai-few', shown.length > 0 && shown.length <= 3); // few agents: full-width cards with room for every detail
       if (shown.length) { list.replaceChildren(...shown.map(card)); return; }
       const start = h('button', 'ai-start', '+ New session');
       start.type = 'button';
