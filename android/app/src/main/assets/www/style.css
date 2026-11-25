@@ -1287,6 +1287,15 @@ body.waking::after { opacity: 0; pointer-events: auto; transition: opacity .2s e
 .q-rings-grid .q-reset { font-size: 10px; color: var(--dim); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 .q-rings-grid .q-pace { display: none; }
 .q-grid { position: relative; }
+/* three rings: two over one, centred; the reset on one line to save height */
+.q-rings.q-rings-tri { display: grid; grid-template-columns: 1fr 1fr; align-content: space-evenly; justify-items: center; gap: 4px 12px; }
+.q-rings-tri .q-ring:nth-child(3) { grid-column: 1 / -1; }
+.q-rings-tri .q-dial { width: min(24cqh, 104px); }
+.q-rings-tri .q-label { margin-top: 4px; }
+.q-rings-tri .q-reset span { display: inline; }
+.q-rings-tri .q-reset span + span::before { content: ' · '; }
+.q-rings-tri .q-reset { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.q-rings-tri :is(.q-pace, .q-left) { margin-top: 3px; }
 
 /* ---------- GPU details ---------- */
 .w-gpu { padding: 9px 12px 10px; display: flex; flex-direction: column; }
